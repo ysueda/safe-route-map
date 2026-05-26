@@ -2,19 +2,17 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>豊島区 避難所ナビ（完全コメント付き版）</title>
+    <title>豊島区 避難所ナビ（避難所データ拡充版）</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        /* --- 画面全体のレイアウト設定 --- */
         body { margin: 0; padding: 0; }
-        #map { height: 100vh; width: 100%; } /* 地図を画面いっぱいに広げる */
+        #map { height: 100vh; width: 100%; } 
         
-        /* --- 左上の操作パネルのデザイン --- */
         #ui-panel {
-            position: absolute; top: 10px; left: 10px; /* 左上に固定 */
-            z-index: 1000; /* 地図より上に表示するための設定 */
+            position: absolute; top: 10px; left: 10px; 
+            z-index: 1000; 
             background: white; padding: 20px; border-radius: 12px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2);
             font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
@@ -23,24 +21,19 @@
         h2 { margin: 0 0 10px 0; font-size: 18px; color: #2c3e50; }
         .mode-selector { margin-bottom: 15px; }
         
-        /* ボタンの基本デザイン */
         .btn {
             display: block; width: 100%; padding: 12px; margin-bottom: 8px;
             border: 2px solid #ddd; border-radius: 8px; background: #f8f9fa;
             font-size: 16px; cursor: pointer; transition: all 0.3s;
         }
-        /* 選択中のボタン（active）のデザイン */
         .btn.active { border-color: #e67e22; background: #fff3e0; font-weight: bold; }
         
-        /* GPS取得ボタンの特別デザイン（緑色） */
         .btn-gps {
             background-color: #27ae60; color: white; border-color: #2ecc71; font-weight: bold;
         }
         .btn-gps:hover { background-color: #219653; }
 
         #status-area { font-size: 14px; color: #666; line-height: 1.4; margin-top: 10px; }
-        
-        /* 検索結果の表示枠（最初は display: none で隠しておく） */
         .result-box { margin-top: 15px; padding: 10px; background: #eef2f3; border-radius: 5px; display: none; }
     </style>
 </head>
@@ -71,48 +64,40 @@
 <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
 <script>
-/* ==========================================
-   システム初期設定・データ準備ブロック
-========================================== */
-
-// ORS (OpenRouteService) の経路探索APIを使うための鍵
 const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijk1YjcxYzhlNWIxMzRlOGI5MWM2ZWM1ODI5ZjZhMzVmIiwiaCI6Im11cm11cjY0In0='; 
 
-// 地図の初期化（豊島区の要町・千川周辺を中心に表示）
-// zoomControl: false で左上のデフォルトズームボタンを消す
-const map = L.map('map', { zoomControl: false }).setView([35.7336, 139.7000], 17);
-// 右下にズームボタンを再配置（UIパネルと被らないようにするため）
+// ★変更点：新しい避難所が画面に収まりやすいよう、ズームレベルを17から15に少し引き気味に設定しました
+const map = L.map('map', { zoomControl: false }).setView([35.736, 139.705], 15);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-// OpenStreetMapのタイル（画像）を地図に貼り付ける
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, // 最大ズームレベルを19にして、細い路地まで拡大できるようにする
+    maxZoom: 19, 
     attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// 目的地の候補となる避難所のデータ一覧
+// ★変更点：指定された7つの避難所データに丸ごと入れ替え
 const shelters = [
     {name: "みらい館大明", lng: 139.70474481582644, lat: 35.73539184518079},
+    {name: "池袋中学校池袋本町小学校", lng: 139.71488356590274, lat: 35.74096095494103},
+    {name: "旧文成中学校", lng: 139.71449196338656, lat: 35.74418293594858},
+    {name: "要小学校", lng: 139.69388723373416, lat: 35.734198724875995},
+    {name: "池袋第三小学校", lng: 139.70291018486026, lat: 35.728498498335576},
+    {name: "池袋小学校", lng: 139.70957279205325, lat: 35.7377344892439},
     {name: "千川中学校", lng: 139.70010459423068, lat: 35.735775033310915}
 ];
 
 // 地図上に避難所のピン（マーカー）を立てる
 shelters.forEach(s => L.marker([s.lat, s.lng]).addTo(map).bindPopup(s.name));
 
-
-/* ==========================================
-   独自ハザードエリア（危険箇所）の定義
-========================================== */
-
-// 【表示用】Leafletは [緯度, 経度] の順番で描画する
+// --- 独自ハザードエリアの設定 ---
 const leafletHazardAreas = [
-    [ // 1つ目の危険エリア
+    [ 
         [35.73315799585287, 139.7002574801445], 
         [35.733125336772225, 139.70040768384936], 
         [35.73306219584498, 139.70040768384936], 
         [35.73309050040476, 139.7002708911896]  
     ],
-    [ // 2つ目の危険エリア
+    [ 
         [35.73376762956671, 139.7005605697632], 
         [35.73375021152534, 139.70072418451312], 
         [35.73369360286466, 139.7007215023041], 
@@ -120,22 +105,20 @@ const leafletHazardAreas = [
     ]
 ];
 
-// 複数の赤いポリゴンを地図上に描画するための準備（レイヤーグループ化）
 const hazardPolygons = leafletHazardAreas.map(area => 
     L.polygon(area, {color: 'red', fillColor: '#f03', fillOpacity: 0.5}).bindPopup("高齢者通行困難エリア（階段・急坂）")
 );
 const hazardPolygonLayer = L.layerGroup(hazardPolygons);
 
-// 【計算用】API（GeoJSON規格）は [経度, 緯度] の順番。さらに「反時計回り」で「最初と最後を閉じる」必要がある
 const apiHazardPolygons = [
-    [[ // 1つ目
+    [[ 
         [139.7002574801445, 35.73315799585287],  
         [139.7002708911896, 35.73309050040476],   
         [139.70040768384936, 35.73306219584498],  
         [139.70040768384936, 35.733125336772225], 
         [139.7002574801445, 35.73315799585287]    
     ]],
-    [[ // 2つ目
+    [[ 
         [139.7005605697632, 35.73376762956671],  
         [139.70055520534518, 35.73369795737846],   
         [139.7007215023041, 35.73369360286466],  
@@ -144,29 +127,19 @@ const apiHazardPolygons = [
     ]]
 ];
 
+let routeLayer = null; 
+let userMarker = null; 
+let currentMode = 'normal'; 
 
-// アプリケーションの今の状態を覚えておく変数
-let routeLayer = null; // 現在引かれているルートの線
-let userMarker = null; // 現在地の緑色のピン
-let currentMode = 'normal'; // 初期モードは通常徒歩
-
-
-/* ==========================================
-   機能①：モード切り替え処理
-========================================== */
 function setMode(mode) {
-    currentMode = mode; // 変数を更新
-    
-    // UIの見た目を変更（押されたボタンだけ色を付ける）
+    currentMode = mode; 
     document.getElementById('btn-normal').classList.toggle('active', mode === 'normal');
     document.getElementById('btn-elderly').classList.toggle('active', mode === 'elderly');
     
-    // ステータス表示のテキストを変更
     document.getElementById('status-area').innerText = mode === 'elderly' 
         ? "高齢者モード：指定した危険エリアや階段を避けたルートを探します。" 
         : "通常モードで検索します。";
 
-    // 高齢者モードなら地図に赤いエリアを表示し、通常モードなら消す
     if (mode === 'elderly') {
         if (!map.hasLayer(hazardPolygonLayer)) hazardPolygonLayer.addTo(map);
     } else {
@@ -174,19 +147,11 @@ function setMode(mode) {
     }
 }
 
-
-/* ==========================================
-   機能②：ルート計算のメイン処理（一番重要な部分！）
-========================================== */
-// async は「通信で少し待つ処理（await）が含まれているよ」という宣言
 async function calculateRoute(userLat, userLng) {
-    
-    // [A] もし高齢者モードの時に、現在地が赤いエリアの中だったら計算をストップする
     if (currentMode === 'elderly') {
-        const point = turf.point([userLng, userLat]); // 現在地
+        const point = turf.point([userLng, userLat]); 
         let inHazard = false;
         
-        // 全ての危険エリアに対して、現在地が含まれているかチェックする
         apiHazardPolygons.forEach(polyCoords => {
             const polygon = turf.polygon(polyCoords);
             if (turf.booleanPointInPolygon(point, polygon)) {
@@ -197,21 +162,18 @@ async function calculateRoute(userLat, userLng) {
         if (inHazard) {
             alert("危険エリアの中にいます！安全な場所に移動してから再度取得してください。");
             document.getElementById('status-area').innerText = "エラー：危険エリア内にいます。";
-            return; // 処理をここで終了させる
+            return; 
         }
     }
 
-    // [B] 地図上の現在地に緑色のピンを置く（古いものがあれば消す）
     if (userMarker) map.removeLayer(userMarker);
     userMarker = L.circleMarker([userLat, userLng], {color: '#27ae60', radius: 10, fillOpacity: 1.0}).addTo(map);
     
     document.getElementById('status-area').innerText = "ルートを計算中...";
 
-    // [C] 最寄りの避難所を計算する（Turf.jsを使用）
     let nearest = shelters[0]; 
-    let minDist = Infinity; // 最初は距離を無限大に設定しておく
+    let minDist = Infinity; 
     
-    // リスト内の全避難所との直線距離を計算し、一番距離が短いものを nearest に入れる
     shelters.forEach(s => {
         let d = turf.distance([userLng, userLat], [s.lng, s.lat]);
         if (d < minDist) { 
@@ -220,12 +182,9 @@ async function calculateRoute(userLat, userLng) {
         }
     });
 
-    // [D] APIへルート計算の依頼（リクエスト）を準備する
     const url = 'https://api.openrouteservice.org/v2/directions/foot-walking/geojson';
-    // スタート地点とゴールの避難所の座標をセット
     const requestBody = { coordinates: [[userLng, userLat], [nearest.lng, nearest.lat]] };
 
-    // 高齢者モードの場合、APIへの注文に「階段(steps)と指定ポリゴンを避けて」という条件を追加する
     if (currentMode === 'elderly') {
         requestBody.options = {
             avoid_features: ["steps"], 
@@ -233,19 +192,15 @@ async function calculateRoute(userLat, userLng) {
         };
     }
 
-    // [E] APIサーバーと通信する（エラーが起きるかもしれないので try-catch で囲む）
     try {
-        // fetchでAPIにデータを送信（POST）する。返事が来るまで待つ（await）
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody) // データをJSON文字列に変換
+            body: JSON.stringify(requestBody) 
         });
         
-        // 返ってきたデータをJSONとして読み込む
         const data = await response.json();
 
-        // サーバー側でルートが見つからなかった場合のエラー処理
         if (data.error) {
             console.error(data.error);
             alert("経路が計算できませんでした。");
@@ -253,68 +208,47 @@ async function calculateRoute(userLat, userLng) {
             return;
         }
 
-        // [F] ルートが見つかったら地図に線を描画する
         if (data.features && data.features.length > 0) {
-            if (routeLayer) map.removeLayer(routeLayer); // 古いルートを消す
+            if (routeLayer) map.removeLayer(routeLayer); 
 
-            // モードによって線の色と太さを変える（高齢者=オレンジ太線、通常=青色細線）
             const routeStyle = {
                 color: currentMode === 'elderly' ? '#e67e22' : '#3498db', 
                 weight: currentMode === 'elderly' ? 10 : 6, 
                 opacity: 0.8
             };
 
-            // ルートデータを地図に追加
             routeLayer = L.geoJSON(data.features[0], { style: routeStyle }).addTo(map);
-            
-            // 返ってきた距離データ（メートル）をキロメートルに直し、小数点2桁に整える
             const dist = (data.features[0].properties.summary.distance / 1000).toFixed(2);
             
-            // 画面上のUIに結果を表示する
             document.getElementById('status-area').innerText = "現在地からのルートが見つかりました！";
             document.getElementById('result-box').style.display = 'block'; 
             document.getElementById('dest-name').innerText = nearest.name; 
             document.getElementById('dest-dist').innerText = dist + " km"; 
             
-            // 引いたルート全体が画面内に綺麗に収まるように、地図を自動でズーム・移動させる
             map.fitBounds(routeLayer.getBounds(), {padding: [50, 50]});
         }
     } catch (error) {
-        // インターネットに繋がっていない等の通信エラー処理
         console.error(error);
         alert("通信エラーが発生しました。");
         document.getElementById('status-area').innerText = "エラーが発生しました。";
     }
 }
 
-
-/* ==========================================
-   機能③：スマホのGPS（位置情報）を取得する処理
-========================================== */
 function useGPS() {
     document.getElementById('status-area').innerText = "📍 人工衛星から現在地を取得中...";
     
-    // ブラウザが位置情報機能（GPS）を持っているかチェック
     if (navigator.geolocation) {
-        // 現在地を取得する命令を実行
         navigator.geolocation.getCurrentPosition(
-            // 【成功時】位置情報が取れたら実行される処理
             function(position) {
                 const lat = position.coords.latitude;
                 const lng = position.coords.longitude;
-                
-                // 取得した現在地に地図を移動させる
                 map.setView([lat, lng], 17);
-                
-                // その現在地の座標を使ってルート計算を行う
                 calculateRoute(lat, lng);
             },
-            // 【失敗時】ユーザーが許可しなかったり、地下で電波がない場合
             function(error) {
                 alert("現在地が取得できませんでした。スマホの設定で位置情報を許可してください。");
                 document.getElementById('status-area').innerText = "エラー：現在地の取得に失敗しました。";
             },
-            // GPSの精度を最高（HighAccuracy）にするための設定
             { enableHighAccuracy: true } 
         );
     } else {
@@ -322,10 +256,6 @@ function useGPS() {
     }
 }
 
-/* ==========================================
-   機能④：地図クリック時の処理（PC用・テスト用）
-========================================== */
-// 地図上のどこかがクリックされたら、その座標（lat, lng）を抜き出してルート計算に渡す
 map.on('click', function(e) {
     calculateRoute(e.latlng.lat, e.latlng.lng);
 });
