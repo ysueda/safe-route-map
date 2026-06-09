@@ -2,59 +2,82 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>豊島区 避難所ナビ（避難所データ拡充版）</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>豊島区 避難所ナビ（シンプルUI・コンパクト版）</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body { margin: 0; padding: 0; }
-        #map { height: 100vh; width: 100%; } 
+        body { margin: 0; padding: 0; font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f4f4f4;}
+        #map { height: 100vh; width: 100%; z-index: 1; } 
         
-        #ui-panel {
+        /* 画面上部の案内・結果表示パネル */
+        #top-panel {
             position: absolute; top: 10px; left: 10px; 
-            z-index: 1000; 
-            background: white; padding: 20px; border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
-            width: 280px;
+            z-index: 1000; width: auto; min-width: 180px; max-width: 240px; 
+            background: rgba(255, 255, 255, 0.95); padding: 10px 12px; border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15); text-align: left;
         }
-        h2 { margin: 0 0 10px 0; font-size: 18px; color: #2c3e50; }
-        .mode-selector { margin-bottom: 15px; }
-        
-        .btn {
-            display: block; width: 100%; padding: 12px; margin-bottom: 8px;
-            border: 2px solid #ddd; border-radius: 8px; background: #f8f9fa;
-            font-size: 16px; cursor: pointer; transition: all 0.3s;
-        }
-        .btn.active { border-color: #e67e22; background: #fff3e0; font-weight: bold; }
-        
-        .btn-gps {
-            background-color: #27ae60; color: white; border-color: #2ecc71; font-weight: bold;
-        }
-        .btn-gps:hover { background-color: #219653; }
+        #status-area { font-size: 12px; color: #333; font-weight: bold; }
+        .result-box { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; display: none; font-size: 13px; line-height: 1.4;}
+        .toilet-badge { font-size: 11px; background: #fff; padding: 2px 4px; border-radius: 4px; border: 1px solid #ddd; margin-left: 5px;}
 
-        #status-area { font-size: 14px; color: #666; line-height: 1.4; margin-top: 10px; }
-        .result-box { margin-top: 15px; padding: 10px; background: #eef2f3; border-radius: 5px; display: none; }
+        /* 画面下部の操作パネル（ボトムシート） */
+        #bottom-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            z-index: 1000; background: white; 
+            padding: 20px 15px 30px 15px; box-sizing: border-box;
+            border-radius: 20px 20px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+        }
+
+        /* メインの巨大ボタン（高齢者ルート一発起動） */
+        .btn-main {
+            display: block; width: 100%; padding: 18px; 
+            background: #e74c3c; color: white; border: none; border-radius: 12px;
+            font-size: 18px; font-weight: bold; box-shadow: 0 4px 6px rgba(231, 76, 60, 0.4);
+            cursor: pointer; transition: background 0.2s;
+        }
+        .btn-main:active { background: #c0392b; transform: translateY(2px); box-shadow: none; }
+
+        /* その他のメニューを開くボタン */
+        .btn-toggle-others {
+            display: block; width: 100%; margin-top: 15px; padding: 10px;
+            background: transparent; color: #7f8c8d; border: none;
+            font-size: 14px; text-decoration: underline; cursor: pointer;
+        }
+
+        /* その他のメニュー（初期は非表示） */
+        #others-menu { display: none; margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px; }
+        .btn-sub {
+            display: block; width: 100%; padding: 12px; margin-bottom: 8px;
+            background: #f8f9fa; color: #2c3e50; border: 2px solid #ddd; border-radius: 8px;
+            font-size: 15px; font-weight: bold; cursor: pointer;
+        }
+        .btn-sub:active { background: #e2e6ea; }
+        
     </style>
 </head>
 <body>
 
-<div id="ui-panel">
-    <h2>豊島区 避難ナビ</h2>
-    
-    <button id="btn-gps" class="btn btn-gps" onclick="useGPS()">📍 現在地からナビ開始</button>
-    <hr style="border: 0; border-top: 1px solid #ddd; margin: 15px 0;">
-
-    <div class="mode-selector">
-        <button id="btn-normal" class="btn active" onclick="setMode('normal')">🚶 通常徒歩</button>
-        <button id="btn-elderly" class="btn" onclick="setMode('elderly')">👴 高齢者（階段・急坂回避）</button>
-    </div>
-    
-    <div id="status-area">現在地を取得するか、地図をクリックしてください。</div>
-    
+<div id="top-panel">
+    <div id="status-area">下のボタンを押すとナビが始まります</div>
     <div id="result-box" class="result-box">
-        <b>最短の避難所:</b><br><span id="dest-name">-</span><br>
-        <b>道なり距離:</b> <span id="dest-dist">-</span>
+        <b>最短の避難所:</b><br><span id="dest-name" style="font-size: 15px; color: #2980b9; font-weight: bold;">-</span><br>
+        <div id="rest-info" style="display:none; color:#27ae60; margin: 6px 0; padding: 6px; background: #e8f8f5; border-radius: 6px;">
+            <b>経由:</b> <span id="rest-name">-</span><br>
+            <span id="rest-toilet" style="font-size: 11px; color: #555;"></span>
+        </div>
+        <b>距離:</b> <span id="dest-dist" style="font-weight: bold;">-</span>
+    </div>
+</div>
+
+<div id="bottom-panel">
+    <button class="btn-main" onclick="quickEvacuate()">🆘 現在地から安全ルートを探す</button>
+    <button class="btn-toggle-others" onclick="toggleOthers()">その他のルート（通常・休憩）を開く ▼</button>
+    
+    <div id="others-menu">
+        <button class="btn-sub" onclick="calculateOtherMode('rest')">☕ 休みながら行く（公園経由）</button>
+        <button class="btn-sub" onclick="calculateOtherMode('normal')">🚶 最短で行く（通常徒歩）</button>
     </div>
 </div>
 
@@ -64,18 +87,13 @@
 <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
 <script>
+document.addEventListener('touchmove', function(e) { if(e.target.id !== 'others-menu') e.preventDefault(); }, { passive: false });
+
 const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijk1YjcxYzhlNWIxMzRlOGI5MWM2ZWM1ODI5ZjZhMzVmIiwiaCI6Im11cm11cjY0In0='; 
 
-// ★変更点：新しい避難所が画面に収まりやすいよう、ズームレベルを17から15に少し引き気味に設定しました
 const map = L.map('map', { zoomControl: false }).setView([35.736, 139.705], 15);
-L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, 
-    attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
-
-// ★変更点：指定された7つの避難所データに丸ごと入れ替え
 const shelters = [
     {name: "みらい館大明", lng: 139.70474481582644, lat: 35.73539184518079},
     {name: "池袋中学校池袋本町小学校", lng: 139.71488356590274, lat: 35.74096095494103},
@@ -86,114 +104,136 @@ const shelters = [
     {name: "千川中学校", lng: 139.70010459423068, lat: 35.735775033310915}
 ];
 
-// 地図上に避難所のピン（マーカー）を立てる
-shelters.forEach(s => L.marker([s.lat, s.lng]).addTo(map).bindPopup(s.name));
-
-// --- 独自ハザードエリアの設定 ---
-const leafletHazardAreas = [
-    [ 
-        [35.73315799585287, 139.7002574801445], 
-        [35.733125336772225, 139.70040768384936], 
-        [35.73306219584498, 139.70040768384936], 
-        [35.73309050040476, 139.7002708911896]  
-    ],
-    [ 
-        [35.73376762956671, 139.7005605697632], 
-        [35.73375021152534, 139.70072418451312], 
-        [35.73369360286466, 139.7007215023041], 
-        [35.73369795737846, 139.70055520534518]  
-    ]
+const restSpots = [
+    {name: "池袋３丁目公園", lat: 35.73472997043111, lng: 139.70399379730227, icon: "🚻", toiletInfo: "和式トイレあり"},
+    {name: "池袋第二公園", lat: 35.73580115970718, lng: 139.70550656318667, icon: "♿", toiletInfo: "多目的トイレあり"},
+    {name: "豊島区立御嶽北公園", lat: 35.73713794887622, lng: 139.70615029335025, icon: "♿", toiletInfo: "多目的トイレあり"},
+    {name: "豊島区立池袋公園", lat: 35.73804582058061, lng: 139.70834702253342, icon: "🚻", toiletInfo: "公衆トイレあり"},
+    {name: "高松二丁目児童遊園", lat: 35.73776932357981, lng: 139.69943135976794, icon: "🚻", toiletInfo: "公衆トイレあり"}
 ];
 
-const hazardPolygons = leafletHazardAreas.map(area => 
-    L.polygon(area, {color: 'red', fillColor: '#f03', fillOpacity: 0.5}).bindPopup("高齢者通行困難エリア（階段・急坂）")
-);
-const hazardPolygonLayer = L.layerGroup(hazardPolygons);
+shelters.forEach(s => L.marker([s.lat, s.lng]).addTo(map).bindPopup(`<b>避難所：</b><br>${s.name}`));
+restSpots.forEach(s => {
+    L.circleMarker([s.lat, s.lng], {color: '#27ae60', fillColor: '#2ecc71', fillOpacity: 0.8, radius: 8})
+     .addTo(map).bindPopup(`<b>休憩：</b><br>${s.name}<br><span style="color:#e67e22;">${s.icon} ${s.toiletInfo}</span>`);
+});
 
 const apiHazardPolygons = [
-    [[ 
-        [139.7002574801445, 35.73315799585287],  
-        [139.7002708911896, 35.73309050040476],   
-        [139.70040768384936, 35.73306219584498],  
-        [139.70040768384936, 35.733125336772225], 
-        [139.7002574801445, 35.73315799585287]    
-    ]],
-    [[ 
-        [139.7005605697632, 35.73376762956671],  
-        [139.70055520534518, 35.73369795737846],   
-        [139.7007215023041, 35.73369360286466],  
-        [139.70072418451312, 35.73375021152534], 
-        [139.7005605697632, 35.73376762956671]    
-    ]]
+    [[[139.700257, 35.733157], [139.700270, 35.733090], [139.700407, 35.733062], [139.700407, 35.733125], [139.700257, 35.733157]]],
+    [[[139.700560, 35.733767], [139.700555, 35.733697], [139.700721, 35.733693], [139.700724, 35.733750], [139.700560, 35.733767]]]
 ];
+const hazardPolygonLayer = L.layerGroup(
+    apiHazardPolygons.map(poly => L.polygon(poly[0].map(coord => [coord[1], coord[0]]), {color: 'red', fillOpacity: 0.5}))
+);
 
 let routeLayer = null; 
 let userMarker = null; 
-let currentMode = 'normal'; 
+let currentMode = 'elderly'; 
 
-function setMode(mode) {
-    currentMode = mode; 
-    document.getElementById('btn-normal').classList.toggle('active', mode === 'normal');
-    document.getElementById('btn-elderly').classList.toggle('active', mode === 'elderly');
-    
-    document.getElementById('status-area').innerText = mode === 'elderly' 
-        ? "高齢者モード：指定した危険エリアや階段を避けたルートを探します。" 
-        : "通常モードで検索します。";
-
-    if (mode === 'elderly') {
-        if (!map.hasLayer(hazardPolygonLayer)) hazardPolygonLayer.addTo(map);
+function toggleOthers() {
+    const menu = document.getElementById('others-menu');
+    const btn = document.querySelector('.btn-toggle-others');
+    if (menu.style.display === 'block') {
+        menu.style.display = 'none';
+        btn.innerText = "その他のルート（通常・休憩）を開く ▼";
     } else {
-        if (map.hasLayer(hazardPolygonLayer)) map.removeLayer(hazardPolygonLayer);
+        menu.style.display = 'block';
+        btn.innerText = "閉じる ▲";
     }
 }
 
+function quickEvacuate() {
+    currentMode = 'elderly';
+    if (!map.hasLayer(hazardPolygonLayer)) hazardPolygonLayer.addTo(map);
+    document.getElementById('others-menu').style.display = 'none'; 
+    document.querySelector('.btn-toggle-others').innerText = "その他のルート（通常・休憩）を開く ▼";
+    useGPS();
+}
+
+function calculateOtherMode(mode) {
+    currentMode = mode;
+    if (map.hasLayer(hazardPolygonLayer)) map.removeLayer(hazardPolygonLayer);
+    document.getElementById('others-menu').style.display = 'none';
+    document.querySelector('.btn-toggle-others').innerText = "その他のルート（通常・休憩）を開く ▼";
+    useGPS();
+}
+
+function useGPS() {
+    document.getElementById('status-area').innerText = "📍 検索中...";
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            position => { 
+                map.setView([position.coords.latitude, position.coords.longitude], 16); 
+                calculateRoute(position.coords.latitude, position.coords.longitude); 
+            },
+            error => { 
+                alert("位置情報が取得できません。地図をタップして場所を指定してください。"); 
+                document.getElementById('status-area').innerText = "地図をタップしてください";
+            },
+            { enableHighAccuracy: true } 
+        );
+    }
+}
+
+map.on('click', function(e) { calculateRoute(e.latlng.lat, e.latlng.lng); });
+
 async function calculateRoute(userLat, userLng) {
-    if (currentMode === 'elderly') {
-        const point = turf.point([userLng, userLat]); 
-        let inHazard = false;
-        
-        apiHazardPolygons.forEach(polyCoords => {
-            const polygon = turf.polygon(polyCoords);
-            if (turf.booleanPointInPolygon(point, polygon)) {
-                inHazard = true;
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.circleMarker([userLat, userLng], {color: '#e74c3c', radius: 8, fillOpacity: 1.0}).addTo(map);
+
+    // 1. 最短の避難所と、そこまでの直接の距離（km）を計算
+    let nearestShelter = shelters[0]; 
+    let directDist = Infinity; 
+    shelters.forEach(s => {
+        let d = turf.distance([userLng, userLat], [s.lng, s.lat]);
+        if (d < directDist) { directDist = d; nearestShelter = s; }
+    });
+
+    const DIRECT_THRESHOLD_KM = 0.3; // 300m以内なら直行
+    const MAX_DETOUR_KM = 0.2;       // 寄り道で増える距離が200mを超えたら直行にする
+
+    let isCloseEnough = (directDist < DIRECT_THRESHOLD_KM);
+    let routeCoordinates = [[userLng, userLat], [nearestShelter.lng, nearestShelter.lat]];
+    let selectedRestSpot = null;
+    let detourReason = ""; // 直行する場合の理由メッセージ
+
+    // 2. 休憩モードの場合のルート計算
+    if (currentMode === 'rest') {
+        if (isCloseEnough) {
+            detourReason = "距離が近いため直接向かいます";
+        } else {
+            let bestScore = Infinity;
+            
+            restSpots.forEach(spot => {
+                let distToSpot = turf.distance([userLng, userLat], [spot.lng, spot.lat]);
+                let distToShelter = turf.distance([spot.lng, spot.lat], [nearestShelter.lng, nearestShelter.lat]);
+                let totalDist = distToSpot + distToShelter;
+                
+                // ★追加：寄り道によって増える距離（迂回コスト）を計算
+                let extraDist = totalDist - directDist;
+
+                // 迂回距離が200m以下 かつ これまでの候補より総距離が短ければ更新
+                if (extraDist <= MAX_DETOUR_KM && totalDist < bestScore) {
+                    bestScore = totalDist;
+                    selectedRestSpot = spot;
+                }
+            });
+
+            if (selectedRestSpot) {
+                routeCoordinates = [[userLng, userLat], [selectedRestSpot.lng, selectedRestSpot.lat], [nearestShelter.lng, nearestShelter.lat]];
+            } else {
+                detourReason = "遠回りになるため直接向かいます"; // 条件に合う休憩所がなかった場合
             }
-        });
-        
-        if (inHazard) {
-            alert("危険エリアの中にいます！安全な場所に移動してから再度取得してください。");
-            document.getElementById('status-area').innerText = "エラー：危険エリア内にいます。";
-            return; 
         }
     }
 
-    if (userMarker) map.removeLayer(userMarker);
-    userMarker = L.circleMarker([userLat, userLng], {color: '#27ae60', radius: 10, fillOpacity: 1.0}).addTo(map);
-    
-    document.getElementById('status-area').innerText = "ルートを計算中...";
-
-    let nearest = shelters[0]; 
-    let minDist = Infinity; 
-    
-    shelters.forEach(s => {
-        let d = turf.distance([userLng, userLat], [s.lng, s.lat]);
-        if (d < minDist) { 
-            minDist = d; 
-            nearest = s; 
-        }
-    });
-
-    const url = 'https://api.openrouteservice.org/v2/directions/foot-walking/geojson';
-    const requestBody = { coordinates: [[userLng, userLat], [nearest.lng, nearest.lat]] };
-
+    const requestBody = { coordinates: routeCoordinates };
     if (currentMode === 'elderly') {
-        requestBody.options = {
-            avoid_features: ["steps"], 
-            avoid_polygons: { type: "MultiPolygon", coordinates: apiHazardPolygons }
-        };
+        requestBody.options = { avoid_features: ["steps"], avoid_polygons: { type: "MultiPolygon", coordinates: apiHazardPolygons } };
     }
 
     try {
-        const response = await fetch(url, {
+        const response = await fetch('https://api.openrouteservice.org/v2/directions/foot-walking/geojson', {
             method: 'POST',
             headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody) 
@@ -201,65 +241,41 @@ async function calculateRoute(userLat, userLng) {
         
         const data = await response.json();
 
-        if (data.error) {
-            console.error(data.error);
-            alert("経路が計算できませんでした。");
-            document.getElementById('status-area').innerText = "ルートが見つかりません。";
-            return;
-        }
-
         if (data.features && data.features.length > 0) {
             if (routeLayer) map.removeLayer(routeLayer); 
-
-            const routeStyle = {
-                color: currentMode === 'elderly' ? '#e67e22' : '#3498db', 
-                weight: currentMode === 'elderly' ? 10 : 6, 
-                opacity: 0.8
-            };
-
-            routeLayer = L.geoJSON(data.features[0], { style: routeStyle }).addTo(map);
+            
+            let routeColor = currentMode === 'elderly' ? '#e74c3c' : (currentMode === 'rest' ? '#27ae60' : '#3498db');
+            routeLayer = L.geoJSON(data.features[0], { style: {color: routeColor, weight: 8, opacity: 0.8} }).addTo(map);
+            
             const dist = (data.features[0].properties.summary.distance / 1000).toFixed(2);
             
-            document.getElementById('status-area').innerText = "現在地からのルートが見つかりました！";
+            document.getElementById('status-area').innerText = "ルートが見つかりました！";
             document.getElementById('result-box').style.display = 'block'; 
-            document.getElementById('dest-name').innerText = nearest.name; 
+            document.getElementById('dest-name').innerText = nearestShelter.name; 
             document.getElementById('dest-dist').innerText = dist + " km"; 
             
-            map.fitBounds(routeLayer.getBounds(), {padding: [50, 50]});
+            const restInfo = document.getElementById('rest-info');
+            if (currentMode === 'rest') {
+                restInfo.style.display = 'block';
+                if (selectedRestSpot) {
+                    // 休憩所を経由する場合
+                    document.getElementById('rest-name').innerHTML = `${selectedRestSpot.name} <span class="toilet-badge">${selectedRestSpot.icon}</span>`;
+                    document.getElementById('rest-toilet').innerText = selectedRestSpot.toiletInfo;
+                } else {
+                    // 直行する場合（近すぎる、または遠回りすぎる）
+                    document.getElementById('rest-name').innerHTML = `<span style="color:#d35400; font-weight:bold;">${detourReason}</span>`;
+                    document.getElementById('rest-toilet').innerText = "そのまま避難所へ進んでください";
+                }
+            } else {
+                restInfo.style.display = 'none';
+            }
+            
+            map.fitBounds(routeLayer.getBounds(), {paddingBottomRight: [0, 200], paddingTopLeft: [200, 0]});
         }
     } catch (error) {
-        console.error(error);
-        alert("通信エラーが発生しました。");
-        document.getElementById('status-area').innerText = "エラーが発生しました。";
+        document.getElementById('status-area').innerText = "ルートの取得に失敗しました。";
     }
 }
-
-function useGPS() {
-    document.getElementById('status-area').innerText = "📍 人工衛星から現在地を取得中...";
-    
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            function(position) {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-                map.setView([lat, lng], 17);
-                calculateRoute(lat, lng);
-            },
-            function(error) {
-                alert("現在地が取得できませんでした。スマホの設定で位置情報を許可してください。");
-                document.getElementById('status-area').innerText = "エラー：現在地の取得に失敗しました。";
-            },
-            { enableHighAccuracy: true } 
-        );
-    } else {
-        alert("お使いのブラウザはGPS機能に対応していません。");
-    }
-}
-
-map.on('click', function(e) {
-    calculateRoute(e.latlng.lat, e.latlng.lng);
-});
-
 </script>
 </body>
 </html>
