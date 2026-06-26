@@ -3,50 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>豊島区 避難所ナビ（シンプルUI・コンパクト版）</title>
-    
+    <title>豊島区 避難所ナビ</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        body { margin: 0; padding: 0; font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f4f4f4;}
-        #map { height: 100vh; width: 100%; z-index: 1; } 
-        
-        /* 画面上部の案内・結果表示パネル */
+        body { margin: 0; padding: 0; font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f4f4f4; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+
         #top-panel {
-            position: absolute; top: 10px; left: 10px; 
-            z-index: 1000; width: auto; min-width: 180px; max-width: 240px; 
-            background: rgba(255, 255, 255, 0.95); padding: 10px 12px; border-radius: 8px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15); text-align: left;
+            position: absolute; top: 10px; left: 10px;
+            z-index: 1000; width: auto; min-width: 190px; max-width: 250px;
+            background: rgba(255,255,255,0.95); padding: 10px 12px; border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
         }
         #status-area { font-size: 12px; color: #333; font-weight: bold; }
-        .result-box { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; display: none; font-size: 13px; line-height: 1.4;}
-        .toilet-badge { font-size: 11px; background: #fff; padding: 2px 4px; border-radius: 4px; border: 1px solid #ddd; margin-left: 5px;}
+        .result-box { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; display: none; font-size: 13px; line-height: 1.6; }
 
-        /* 画面下部の操作パネル（ボトムシート） */
+        #rest-info {
+            display: none; margin-top: 6px;
+            padding: 6px 8px; background: #e8f8f5; border-radius: 6px; font-size: 12px;
+        }
+        #rest-info.warning { background: #fef9e7; color: #d35400; }
+
+        /* 凡例 */
+        #legend {
+            position: absolute; bottom: 180px; left: 10px;
+            z-index: 1000; background: rgba(255,255,255,0.92);
+            padding: 8px 10px; border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            font-size: 11px; line-height: 1.8;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot {
+            width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+        }
+
         #bottom-panel {
             position: absolute; bottom: 0; left: 0; width: 100%;
-            z-index: 1000; background: white; 
+            z-index: 1000; background: white;
             padding: 20px 15px 30px 15px; box-sizing: border-box;
             border-radius: 20px 20px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
         }
-
-        /* メインの巨大ボタン（高齢者ルート一発起動） */
         .btn-main {
-            display: block; width: 100%; padding: 18px; 
+            display: block; width: 100%; padding: 18px;
             background: #e74c3c; color: white; border: none; border-radius: 12px;
-            font-size: 18px; font-weight: bold; box-shadow: 0 4px 6px rgba(231, 76, 60, 0.4);
-            cursor: pointer; transition: background 0.2s;
+            font-size: 18px; font-weight: bold; box-shadow: 0 4px 6px rgba(231,76,60,0.4);
+            cursor: pointer;
         }
         .btn-main:active { background: #c0392b; transform: translateY(2px); box-shadow: none; }
-
-        /* その他のメニューを開くボタン */
         .btn-toggle-others {
             display: block; width: 100%; margin-top: 15px; padding: 10px;
             background: transparent; color: #7f8c8d; border: none;
             font-size: 14px; text-decoration: underline; cursor: pointer;
         }
-
-        /* その他のメニュー（初期は非表示） */
         #others-menu { display: none; margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px; }
         .btn-sub {
             display: block; width: 100%; padding: 12px; margin-bottom: 8px;
@@ -54,226 +62,438 @@
             font-size: 15px; font-weight: bold; cursor: pointer;
         }
         .btn-sub:active { background: #e2e6ea; }
-        
+
+        #loading-overlay {
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.35); z-index: 2000;
+            justify-content: center; align-items: center;
+        }
+        #loading-overlay.active { display: flex; }
+        #loading-box {
+            background: white; border-radius: 12px; padding: 24px 32px;
+            text-align: center; font-size: 15px; font-weight: bold; color: #333;
+        }
+        .spinner {
+            width: 36px; height: 36px; border: 4px solid #eee;
+            border-top-color: #e74c3c; border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
+<div id="map"></div>
+
+<div id="loading-overlay">
+    <div id="loading-box">
+        <div class="spinner"></div>
+        ルートを計算中…
+    </div>
+</div>
+
 <div id="top-panel">
     <div id="status-area">下のボタンを押すとナビが始まります</div>
     <div id="result-box" class="result-box">
-        <b>最短の避難所:</b><br><span id="dest-name" style="font-size: 15px; color: #2980b9; font-weight: bold;">-</span><br>
-        <div id="rest-info" style="display:none; color:#27ae60; margin: 6px 0; padding: 6px; background: #e8f8f5; border-radius: 6px;">
-            <b>経由:</b> <span id="rest-name">-</span><br>
-            <span id="rest-toilet" style="font-size: 11px; color: #555;"></span>
+        <b>最寄り避難所:</b><br>
+        <span id="dest-name" style="font-size:15px; color:#2980b9; font-weight:bold;">-</span><br>
+        <b>距離:</b> <span id="dest-dist" style="font-weight:bold;">-</span>
+        <div id="rest-info">
+            <span id="rest-text"></span>
         </div>
-        <b>距離:</b> <span id="dest-dist" style="font-weight: bold;">-</span>
     </div>
+</div>
+
+<!-- 凡例 -->
+<div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#e74c3c;"></div>現在地</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2c3e50; border-radius:2px;"></div>避難所</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#27ae60;"></div>休憩スポット</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2980b9;"></div>公衆トイレ</div>
+    <div class="legend-item"><div class="legend-dot" style="background:red; opacity:0.6;"></div>危険エリア</div>
 </div>
 
 <div id="bottom-panel">
     <button class="btn-main" onclick="quickEvacuate()">🆘 現在地から安全ルートを探す</button>
-    <button class="btn-toggle-others" onclick="toggleOthers()">その他のルート（通常・休憩）を開く ▼</button>
-    
+    <button class="btn-toggle-others" onclick="toggleOthers()">その他のルートを開く ▼</button>
     <div id="others-menu">
-        <button class="btn-sub" onclick="calculateOtherMode('rest')">☕ 休みながら行く（公園経由）</button>
-        <button class="btn-sub" onclick="calculateOtherMode('normal')">🚶 最短で行く（通常徒歩）</button>
+        <button class="btn-sub" onclick="startMode('normal')">🚶 最短で行く（通常徒歩）</button>
     </div>
 </div>
 
-<div id="map"></div>
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
-
 <script>
-document.addEventListener('touchmove', function(e) { if(e.target.id !== 'others-menu') e.preventDefault(); }, { passive: false });
+// ⚠️ 本番環境ではAPIキーをバックエンドのプロキシ経由にしてください
+const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijk1YjcxYzhlNWIxMzRlOGI5MWM2ZWM1ODI5ZjZhMzVmIiwiaCI6Im11cm11cjY0In0=';
 
-const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijk1YjcxYzhlNWIxMzRlOGI5MWM2ZWM1ODI5ZjZhMzVmIiwiaCI6Im11cm11cjY0In0='; 
+document.addEventListener('touchmove', e => {
+    if (e.target.closest('#map') || e.target.id === 'others-menu') return;
+    e.preventDefault();
+}, { passive: false });
 
 const map = L.map('map', { zoomControl: false }).setView([35.736, 139.705], 15);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
 
+// ═══════════════════════════════════════════════════════
+// 避難所データ
+// 出典：東京都防災マップ 避難所・避難場所一覧データ（CC BY 4.0）
+// https://catalog.data.metro.tokyo.lg.jp/dataset/t000003d0000000093
+// ═══════════════════════════════════════════════════════
 const shelters = [
-    {name: "みらい館大明", lng: 139.70474481582644, lat: 35.73539184518079},
-    {name: "池袋中学校池袋本町小学校", lng: 139.71488356590274, lat: 35.74096095494103},
-    {name: "旧文成中学校", lng: 139.71449196338656, lat: 35.74418293594858},
-    {name: "要小学校", lng: 139.69388723373416, lat: 35.734198724875995},
-    {name: "池袋第三小学校", lng: 139.70291018486026, lat: 35.728498498335576},
-    {name: "池袋小学校", lng: 139.70957279205325, lat: 35.7377344892439},
-    {name: "千川中学校", lng: 139.70010459423068, lat: 35.735775033310915}
+    { name: "旧文成小学校",                    lat: 35.74437000, lng: 139.71450000 },
+    { name: "池袋第三小学校",                   lat: 35.72858400, lng: 139.70301200 },
+    { name: "巣鴨北中学校",                    lat: 35.74167651, lng: 139.72883770 },
+    { name: "池袋本町小学校・池袋中学校（連携校）",  lat: 35.74071400, lng: 139.71457300 },
+    { name: "西部区民事務所",                   lat: 35.73575000, lng: 139.69085800 },
+    { name: "旧真和中学校",                    lat: 35.72548100, lng: 139.69703700 },
+    { name: "仰高小学校",                     lat: 35.73660534, lng: 139.73847310 },
+    { name: "駒込小学校",                     lat: 35.73855524, lng: 139.74325560 },
+    { name: "巣鴨小学校",                     lat: 35.72847815, lng: 139.73490670 },
+    { name: "清和小学校",                     lat: 35.73588527, lng: 139.73290560 },
+    { name: "西巣鴨小学校",                    lat: 35.73849979, lng: 139.72596510 },
+    { name: "豊成小学校",                     lat: 35.73497608, lng: 139.72200850 },
+    { name: "朋有小学校",                     lat: 35.72898679, lng: 139.72350570 },
+    { name: "朝日小学校",                     lat: 35.74112168, lng: 139.73304940 },
+    { name: "池袋第一小学校",                   lat: 35.74168224, lng: 139.71888250 },
+    { name: "池袋小学校",                     lat: 35.73797441, lng: 139.70971650 },
+    { name: "目白小学校",                     lat: 35.72066236, lng: 139.70996610 },
+    { name: "長崎小学校",                     lat: 35.72845295, lng: 139.68986150 },
+    { name: "要小学校",                      lat: 35.73437238, lng: 139.69369000 },
+    { name: "椎名町小学校",                    lat: 35.72672503, lng: 139.68554100 },
+    { name: "高松小学校",                     lat: 35.73956790, lng: 139.69727840 },
+    { name: "千早小学校",                     lat: 35.73504414, lng: 139.68727950 },
+    { name: "富士見台小学校",                   lat: 35.72469546, lng: 139.69320540 },
+    { name: "南池袋小学校",                    lat: 35.72440108, lng: 139.71491860 },
+    { name: "さくら小学校",                    lat: 35.73605283, lng: 139.67998310 },
+    { name: "駒込中学校",                     lat: 35.73600050, lng: 139.74191380 },
+    { name: "西巣鴨中学校",                    lat: 35.72886891, lng: 139.72748030 },
+    { name: "千川中学校",                     lat: 35.73604536, lng: 139.69995240 },
+    { name: "西池袋中学校",                    lat: 35.72773630, lng: 139.69996670 },
+    { name: "千登世橋中学校",                   lat: 35.71701981, lng: 139.71132920 },
+    { name: "明豊中学校",                     lat: 35.73577797, lng: 139.68415870 },
+    { name: "豊島体育館",                     lat: 35.74001500, lng: 139.68955700 },
+    { name: "南長崎スポーツ公園",                lat: 35.72480300, lng: 139.68345300 },
+    { name: "みらい館大明",                    lat: 35.73566453, lng: 139.70451200 },
 ];
 
+// ═══════════════════════════════════════════════════════
+// 休憩スポット（公園）
+// 出典：豊島区公共施設一覧（CC BY 2.1）
+// https://www.city.toshima.lg.jp/020/kuse/electronic/open-data/1511041608.html
+// ※ 名称に「公園」「児童遊園」「緑道」「広場」を含む施設を抽出
+// ═══════════════════════════════════════════════════════
 const restSpots = [
-    {name: "池袋３丁目公園", lat: 35.73472997043111, lng: 139.70399379730227, icon: "🚻", toiletInfo: "和式トイレあり"},
-    {name: "池袋第二公園", lat: 35.73580115970718, lng: 139.70550656318667, icon: "♿", toiletInfo: "多目的トイレあり"},
-    {name: "豊島区立御嶽北公園", lat: 35.73713794887622, lng: 139.70615029335025, icon: "♿", toiletInfo: "多目的トイレあり"},
-    {name: "豊島区立池袋公園", lat: 35.73804582058061, lng: 139.70834702253342, icon: "🚻", toiletInfo: "公衆トイレあり"},
-    {name: "高松二丁目児童遊園", lat: 35.73776932357981, lng: 139.69943135976794, icon: "🚻", toiletInfo: "公衆トイレあり"}
+    { name: "駒込東公園",           lat: 35.73572, lng: 139.74966 },
+    { name: "染井吉野桜記念公園",     lat: 35.73686, lng: 139.74675 },
+    { name: "駒込公園",            lat: 35.73757, lng: 139.74695 },
+    { name: "駒込四丁目公園",        lat: 35.73521, lng: 139.74182 },
+    { name: "駒込西公園",           lat: 35.73808, lng: 139.73907 },
+    { name: "染井よしの桜の里公園",    lat: 35.73854, lng: 139.74150 },
+    { name: "江戸橋公園",           lat: 35.73183, lng: 139.73671 },
+    { name: "朝日公園",            lat: 35.74111, lng: 139.73239 },
+    { name: "西巣鴨公園",           lat: 35.73643, lng: 139.72568 },
+    { name: "西巣鴨二丁目公園",       lat: 35.74023, lng: 139.72751 },
+    { name: "千川上水公園",          lat: 35.74164, lng: 139.72681 },
+    { name: "巣鴨公園",            lat: 35.73223, lng: 139.73235 },
+    { name: "北大塚二丁目公園",       lat: 35.73505, lng: 139.72968 },
+    { name: "北大塚公園",           lat: 35.73384, lng: 139.72287 },
+    { name: "南大塚からたち公園",      lat: 35.72609, lng: 139.73358 },
+    { name: "南大塚公園",           lat: 35.72770, lng: 139.73125 },
+    { name: "大塚台公園",           lat: 35.73023, lng: 139.72575 },
+    { name: "上池袋中央公園",        lat: 35.73697, lng: 139.72165 },
+    { name: "上池袋東公園",          lat: 35.73619, lng: 139.72250 },
+    { name: "宮仲公園",            lat: 35.73610, lng: 139.72464 },
+    { name: "上池袋公園",           lat: 35.73610, lng: 139.71640 },
+    { name: "上池袋さくら公園",       lat: 35.73846, lng: 139.71704 },
+    { name: "堀之内公園",           lat: 35.73877, lng: 139.71889 },
+    { name: "上池袋くすのき公園",      lat: 35.74068, lng: 139.72095 },
+    { name: "中池袋公園",           lat: 35.73158, lng: 139.71504 },
+    { name: "池袋駅前公園",          lat: 35.73285, lng: 139.71278 },
+    { name: "東池袋青空公園",        lat: 35.73132, lng: 139.72345 },
+    { name: "東池袋二丁目第三公園",    lat: 35.73357, lng: 139.71832 },
+    { name: "東池袋中央公園",        lat: 35.72929, lng: 139.71919 },
+    { name: "東池袋公園",           lat: 35.73130, lng: 139.71777 },
+    { name: "南池袋一丁目公園",       lat: 35.72414, lng: 139.70947 },
+    { name: "南池袋公園",           lat: 35.72760, lng: 139.71432 },
+    { name: "南池袋みどり公園",       lat: 35.72202, lng: 139.71739 },
+    { name: "南池袋第二公園",        lat: 35.72245, lng: 139.71707 },
+    { name: "池袋西口公園",          lat: 35.72988, lng: 139.70824 },
+    { name: "元池袋史跡公園",        lat: 35.72892, lng: 139.70853 },
+    { name: "上り屋敷公園",          lat: 35.72642, lng: 139.70506 },
+    { name: "西池袋公園",           lat: 35.73058, lng: 139.70546 },
+    { name: "谷端川第二親水公園",      lat: 35.73113310752579, lng:139.69965398311618 },
+    { name: "池袋ふれあい公園",       lat: 35.73627, lng: 139.71048 },
+    { name: "池袋三丁目公園",        lat: 35.73488, lng: 139.70387 },
+    { name: "御嶽北公園",           lat: 35.73748, lng: 139.70613 },
+    { name: "池袋第二公園",          lat: 35.73570, lng: 139.70578 },
+    { name: "谷端川親水公園",        lat: 35.73333, lng: 139.70055 },
+    { name: "池袋公園",            lat: 35.73798, lng: 139.70863 },
+    { name: "池袋本町公園",          lat: 35.73978, lng: 139.71364 },
+    { name: "雑司が谷一丁目公園",      lat: 35.72062, lng: 139.72150 },
+    { name: "雑司が谷公園",          lat: 35.71864, lng: 139.71642 },
+    { name: "雑司が谷みみずく公園",     lat: 35.72192, lng: 139.71371 },
+    { name: "高田第二公園",          lat: 35.71309, lng: 139.72090 },
+    { name: "山吹の里公園",          lat: 35.71413, lng: 139.71806 },
+    { name: "高田公園",            lat: 35.71536, lng: 139.71506 },
+    { name: "高田第三公園",          lat: 35.71515, lng: 139.70723 },
+    { name: "高田中央三丁目公園",      lat: 35.71617, lng: 139.71097 },
+    { name: "目白三丁目公園",        lat: 35.722730359606054, lng: 139.70643460750583 },
+    { name: "椎名町公園",           lat: 35.72582, lng: 139.69331 },
+    { name: "南長崎花咲公園",        lat: 35.72467053895391, lng: 139.68617320060733 },
+    { name: "南長崎公園",           lat: 35.72683, lng: 139.68835 },
+    { name: "南長崎はらっぱ公園",      lat: 35.72842, lng: 139.67993 },
+    { name: "長崎公園",            lat: 35.73097, lng: 139.68803 },
+    { name: "長五さくら公園",        lat: 35.73376, lng: 139.68375 },
+    { name: "千早フラワー公園",       lat: 35.73128, lng: 139.69350 },
+    { name: "千早第二公園",          lat: 35.73226, lng: 139.69672 },
+    { name: "千早公園",            lat: 35.73489, lng: 139.69057 },
+    { name: "千早緑地公園",          lat: 35.734196547632834, lng: 139.68908071517947 },
+    { name: "千早二丁目公園",        lat: 35.73513, lng: 139.68858 },
+    { name: "千早四丁目なかよし公園",   lat: 35.73785, lng: 139.68356 },
+    { name: "千早四丁目公園",        lat: 35.73857, lng: 139.68506 },
+    { name: "千川親水公園",          lat: 35.73743, lng: 139.68663 },
+    { name: "ふるさと千川ひろば",      lat: 35.74070, lng: 139.68918 },
+    { name: "千川彫刻公園",          lat: 35.73841, lng: 139.69113 },
+    { name: "南長崎中央公園",        lat: 35.72449, lng: 139.68369 },
+    { name: "池本だんだん公園",       lat: 35.74348, lng: 139.71011 },
+    { name: "としまみどりの防災公園",   lat: 35.72778, lng: 139.72185 },
+    { name: "目白庭園",            lat: 35.72450069349076, lng: 139.70555216073993 },
+    { name: "谷端川南緑道",          lat: 35.72675, lng: 139.69954 },
+    { name: "谷端川北緑道",          lat: 35.74500, lng: 139.71027 },
 ];
 
-shelters.forEach(s => L.marker([s.lat, s.lng]).addTo(map).bindPopup(`<b>避難所：</b><br>${s.name}`));
-restSpots.forEach(s => {
-    L.circleMarker([s.lat, s.lng], {color: '#27ae60', fillColor: '#2ecc71', fillOpacity: 0.8, radius: 8})
-     .addTo(map).bindPopup(`<b>休憩：</b><br>${s.name}<br><span style="color:#e67e22;">${s.icon} ${s.toiletInfo}</span>`);
-});
-
-const apiHazardPolygons = [
-    [[[139.700257, 35.733157], [139.700270, 35.733090], [139.700407, 35.733062], [139.700407, 35.733125], [139.700257, 35.733157]]],
-    [[[139.700560, 35.733767], [139.700555, 35.733697], [139.700721, 35.733693], [139.700724, 35.733750], [139.700560, 35.733767]]]
+// ═══════════════════════════════════════════════════════
+// 公衆トイレデータ
+// 出典：豊島区公衆トイレ一覧（CC BY 2.1）
+// https://www.city.toshima.lg.jp/020/kuse/electronic/open-data/1511041608.html
+// ═══════════════════════════════════════════════════════
+const toilets = [
+    { name: "巣鴨駅前公衆便所",       lat: 35.73308, lng: 139.73944 },
+    { name: "巣鴨三丁目公衆便所",      lat: 35.73597, lng: 139.73556 },
+    { name: "庚申塚広場公衆便所",      lat: 35.73956, lng: 139.72972 },
+    { name: "大塚駅前公衆便所",        lat: 35.73178, lng: 139.72889 },
+    { name: "池袋駅北口前公衆便所",     lat: 35.73167, lng: 139.71139 },
+    { name: "目白駅前公衆便所",        lat: 35.72131, lng: 139.70694 },
 ];
-const hazardPolygonLayer = L.layerGroup(
-    apiHazardPolygons.map(poly => L.polygon(poly[0].map(coord => [coord[1], coord[0]]), {color: 'red', fillOpacity: 0.5}))
+
+// ハザードポリゴン（固定値。本来は行政GeoJSONから取得が理想）
+const hazardPolygons = [
+    [[[139.700257,35.733157],[139.700270,35.733090],[139.700407,35.733062],[139.700407,35.733125],[139.700257,35.733157]]],
+    [[[139.700560,35.733767],[139.700555,35.733697],[139.700721,35.733693],[139.700724,35.733750],[139.700560,35.733767]]]
+];
+
+// ── 閾値定数 ────────────────────────────────────────────
+// 根拠：消防庁・国交省の津波避難計画策定指針
+//       高齢者の避難限界距離500m → 500m以上で休憩経由を検討
+const REST_TRIGGER_M    = 500;
+// 根拠：避難限界距離500mの20% → 100m以上の迂回は直行にフォールバック
+const MAX_DETOUR_M      = 100;
+// スタート・ゴールから50m以内の休憩スポットは除外
+const MIN_ENDPOINT_DIST_M = 50;
+
+// ── マーカー描画 ─────────────────────────────────────────
+
+// 避難所（青いマーカー）
+shelters.forEach(s =>
+    L.marker([s.lat, s.lng]).addTo(map)
+     .bindPopup(`<b>🏫 避難所</b><br>${s.name}`)
 );
 
-let routeLayer = null; 
-let userMarker = null; 
-let currentMode = 'elderly'; 
+// 休憩スポット（緑丸）
+restSpots.forEach(s =>
+    L.circleMarker([s.lat, s.lng], {
+        color: '#1e8449', fillColor: '#27ae60', fillOpacity: 0.85, radius: 7, weight: 1.5
+    }).addTo(map)
+     .bindPopup(`<b>🌳 休憩スポット</b><br>${s.name}`)
+);
 
+// 公衆トイレ（青丸＋🚻アイコン）
+const toiletIcon = L.divIcon({
+    html: '<div style="font-size:16px; line-height:1;">🚻</div>',
+    className: '',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+});
+toilets.forEach(t =>
+    L.marker([t.lat, t.lng], { icon: toiletIcon }).addTo(map)
+     .bindPopup(`<b>🚻 公衆トイレ</b><br>${t.name}`)
+);
+
+// 危険エリア
+const hazardLayer = L.layerGroup(
+    hazardPolygons.map(poly =>
+        L.polygon(poly[0].map(c => [c[1], c[0]]), { color:'red', fillOpacity:0.5 })
+    )
+);
+
+let routeLayer  = null;
+let userMarker  = null;
+let currentMode = 'elderly';
+
+// ── UI操作 ──────────────────────────────────────────────
 function toggleOthers() {
     const menu = document.getElementById('others-menu');
-    const btn = document.querySelector('.btn-toggle-others');
-    if (menu.style.display === 'block') {
-        menu.style.display = 'none';
-        btn.innerText = "その他のルート（通常・休憩）を開く ▼";
-    } else {
-        menu.style.display = 'block';
-        btn.innerText = "閉じる ▲";
-    }
+    const btn  = document.querySelector('.btn-toggle-others');
+    const open = menu.style.display === 'block';
+    menu.style.display = open ? 'none' : 'block';
+    btn.innerText = open ? "その他のルートを開く ▼" : "閉じる ▲";
 }
 
-function quickEvacuate() {
-    currentMode = 'elderly';
-    if (!map.hasLayer(hazardPolygonLayer)) hazardPolygonLayer.addTo(map);
-    document.getElementById('others-menu').style.display = 'none'; 
-    document.querySelector('.btn-toggle-others').innerText = "その他のルート（通常・休憩）を開く ▼";
-    useGPS();
-}
+function quickEvacuate() { startMode('elderly'); }
 
-function calculateOtherMode(mode) {
+function startMode(mode) {
     currentMode = mode;
-    if (map.hasLayer(hazardPolygonLayer)) map.removeLayer(hazardPolygonLayer);
+    if (mode === 'elderly') {
+        if (!map.hasLayer(hazardLayer)) hazardLayer.addTo(map);
+    } else {
+        if (map.hasLayer(hazardLayer)) map.removeLayer(hazardLayer);
+    }
     document.getElementById('others-menu').style.display = 'none';
-    document.querySelector('.btn-toggle-others').innerText = "その他のルート（通常・休憩）を開く ▼";
+    document.querySelector('.btn-toggle-others').innerText = "その他のルートを開く ▼";
     useGPS();
 }
 
-function useGPS() {
-    document.getElementById('status-area').innerText = "📍 検索中...";
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            position => { 
-                map.setView([position.coords.latitude, position.coords.longitude], 16); 
-                calculateRoute(position.coords.latitude, position.coords.longitude); 
-            },
-            error => { 
-                alert("位置情報が取得できません。地図をタップして場所を指定してください。"); 
-                document.getElementById('status-area').innerText = "地図をタップしてください";
-            },
-            { enableHighAccuracy: true } 
-        );
-    }
+function setLoading(v) {
+    document.getElementById('loading-overlay').classList.toggle('active', v);
 }
 
-map.on('click', function(e) { calculateRoute(e.latlng.lat, e.latlng.lng); });
+// ── GPS取得 ──────────────────────────────────────────────
+function useGPS() {
+    document.getElementById('status-area').innerText = "📍 現在地を取得中...";
+    if (!navigator.geolocation) {
+        alert("GPSが使えません。地図をタップして場所を指定してください。");
+        document.getElementById('status-area').innerText = "地図をタップしてください";
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(
+        pos => {
+            map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+            calculateRoute(pos.coords.latitude, pos.coords.longitude);
+        },
+        () => {
+            alert("位置情報が取得できません。地図をタップして場所を指定してください。");
+            document.getElementById('status-area').innerText = "地図をタップしてください";
+        },
+        { enableHighAccuracy: true }
+    );
+}
 
+map.on('click', e => calculateRoute(e.latlng.lat, e.latlng.lng));
+
+// ── ルート計算メイン ─────────────────────────────────────
 async function calculateRoute(userLat, userLng) {
+    setLoading(true);
+
     if (userMarker) map.removeLayer(userMarker);
-    userMarker = L.circleMarker([userLat, userLng], {color: '#e74c3c', radius: 8, fillOpacity: 1.0}).addTo(map);
+    userMarker = L.circleMarker([userLat, userLng], {
+        color:'#e74c3c', radius:8, fillOpacity:1.0
+    }).addTo(map);
 
-    // 1. 最短の避難所と、そこまでの直接の距離（km）を計算
-    let nearestShelter = shelters[0]; 
-    let directDist = Infinity; 
+    const userPt = [userLng, userLat];
+
+    // Step1: 直線距離で最寄り避難所を選ぶ
+    let nearestShelter = shelters[0];
+    let minDistKm = Infinity;
     shelters.forEach(s => {
-        let d = turf.distance([userLng, userLat], [s.lng, s.lat]);
-        if (d < directDist) { directDist = d; nearestShelter = s; }
+        const d = turf.distance(userPt, [s.lng, s.lat]);
+        if (d < minDistKm) { minDistKm = d; nearestShelter = s; }
     });
+    const minDistM = minDistKm * 1000;
+    const shelterPt = [nearestShelter.lng, nearestShelter.lat];
 
-    const DIRECT_THRESHOLD_KM = 0.3; // 300m以内なら直行
-    const MAX_DETOUR_KM = 0.2;       // 寄り道で増える距離が200mを超えたら直行にする
+    // Step2: 高齢者モード・500m以上なら休憩スポット経由を検討
+    let routeCoords  = [userPt, shelterPt];
+    let selectedRest = null;
+    let detourReason = "";
 
-    let isCloseEnough = (directDist < DIRECT_THRESHOLD_KM);
-    let routeCoordinates = [[userLng, userLat], [nearestShelter.lng, nearestShelter.lat]];
-    let selectedRestSpot = null;
-    let detourReason = ""; // 直行する場合の理由メッセージ
+    if (currentMode === 'elderly' && minDistM >= REST_TRIGGER_M) {
+        let bestTotalM = Infinity;
 
-    // 2. 休憩モードの場合のルート計算
-    if (currentMode === 'rest') {
-        if (isCloseEnough) {
-            detourReason = "距離が近いため直接向かいます";
-        } else {
-            let bestScore = Infinity;
-            
-            restSpots.forEach(spot => {
-                let distToSpot = turf.distance([userLng, userLat], [spot.lng, spot.lat]);
-                let distToShelter = turf.distance([spot.lng, spot.lat], [nearestShelter.lng, nearestShelter.lat]);
-                let totalDist = distToSpot + distToShelter;
-                
-                // ★追加：寄り道によって増える距離（迂回コスト）を計算
-                let extraDist = totalDist - directDist;
+        restSpots.forEach(spot => {
+            const spotPt     = [spot.lng, spot.lat];
+            const d2spotM    = turf.distance(userPt, spotPt) * 1000;
+            const d2shelterM = turf.distance(spotPt, shelterPt) * 1000;
 
-                // 迂回距離が200m以下 かつ これまでの候補より総距離が短ければ更新
-                if (extraDist <= MAX_DETOUR_KM && totalDist < bestScore) {
-                    bestScore = totalDist;
-                    selectedRestSpot = spot;
-                }
-            });
+            if (d2spotM < MIN_ENDPOINT_DIST_M || d2shelterM < MIN_ENDPOINT_DIST_M) return;
 
-            if (selectedRestSpot) {
-                routeCoordinates = [[userLng, userLat], [selectedRestSpot.lng, selectedRestSpot.lat], [nearestShelter.lng, nearestShelter.lat]];
-            } else {
-                detourReason = "遠回りになるため直接向かいます"; // 条件に合う休憩所がなかった場合
+            const totalM  = d2spotM + d2shelterM;
+            const detourM = totalM - minDistM;
+
+            if (detourM <= MAX_DETOUR_M && totalM < bestTotalM) {
+                bestTotalM   = totalM;
+                selectedRest = spot;
             }
+        });
+
+        if (selectedRest) {
+            routeCoords = [userPt, [selectedRest.lng, selectedRest.lat], shelterPt];
+        } else {
+            detourReason = "近くに適切な休憩スポットがないため直接向かいます";
         }
     }
 
-    const requestBody = { coordinates: routeCoordinates };
+    // Step3: ORS API で最終ルートを1回取得
+    const body = { coordinates: routeCoords };
     if (currentMode === 'elderly') {
-        requestBody.options = { avoid_features: ["steps"], avoid_polygons: { type: "MultiPolygon", coordinates: apiHazardPolygons } };
+        body.options = {
+            avoid_features: ["steps"],
+            avoid_polygons: { type: "MultiPolygon", coordinates: hazardPolygons }
+        };
     }
 
     try {
-        const response = await fetch('https://api.openrouteservice.org/v2/directions/foot-walking/geojson', {
+        const res  = await fetch('https://api.openrouteservice.org/v2/directions/foot-walking/geojson', {
             method: 'POST',
             headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody) 
+            body: JSON.stringify(body)
         });
-        
-        const data = await response.json();
+        const data = await res.json();
 
         if (data.features && data.features.length > 0) {
-            if (routeLayer) map.removeLayer(routeLayer); 
-            
-            let routeColor = currentMode === 'elderly' ? '#e74c3c' : (currentMode === 'rest' ? '#27ae60' : '#3498db');
-            routeLayer = L.geoJSON(data.features[0], { style: {color: routeColor, weight: 8, opacity: 0.8} }).addTo(map);
-            
-            const dist = (data.features[0].properties.summary.distance / 1000).toFixed(2);
-            
+            if (routeLayer) map.removeLayer(routeLayer);
+
+            const color = currentMode === 'elderly' ? '#e74c3c' : '#3498db';
+            routeLayer = L.geoJSON(data.features[0], {
+                style: { color, weight: 8, opacity: 0.8 }
+            }).addTo(map);
+
+            const distKm = (data.features[0].properties.summary.distance / 1000).toFixed(2);
+
             document.getElementById('status-area').innerText = "ルートが見つかりました！";
-            document.getElementById('result-box').style.display = 'block'; 
-            document.getElementById('dest-name').innerText = nearestShelter.name; 
-            document.getElementById('dest-dist').innerText = dist + " km"; 
-            
-            const restInfo = document.getElementById('rest-info');
-            if (currentMode === 'rest') {
-                restInfo.style.display = 'block';
-                if (selectedRestSpot) {
-                    // 休憩所を経由する場合
-                    document.getElementById('rest-name').innerHTML = `${selectedRestSpot.name} <span class="toilet-badge">${selectedRestSpot.icon}</span>`;
-                    document.getElementById('rest-toilet').innerText = selectedRestSpot.toiletInfo;
+            document.getElementById('result-box').style.display = 'block';
+            document.getElementById('dest-name').innerText = nearestShelter.name;
+            document.getElementById('dest-dist').innerText  = distKm + " km";
+
+            const restInfoEl = document.getElementById('rest-info');
+            const restTextEl = document.getElementById('rest-text');
+
+            if (currentMode === 'elderly' && minDistM >= REST_TRIGGER_M) {
+                restInfoEl.style.display = 'block';
+                if (selectedRest) {
+                    restInfoEl.className = '';
+                    restTextEl.innerHTML = `🌳 <b>経由休憩スポット:</b><br>${selectedRest.name}`;
                 } else {
-                    // 直行する場合（近すぎる、または遠回りすぎる）
-                    document.getElementById('rest-name').innerHTML = `<span style="color:#d35400; font-weight:bold;">${detourReason}</span>`;
-                    document.getElementById('rest-toilet').innerText = "そのまま避難所へ進んでください";
+                    restInfoEl.className = 'warning';
+                    restTextEl.innerHTML = `⚠️ ${detourReason}`;
                 }
             } else {
-                restInfo.style.display = 'none';
+                restInfoEl.style.display = 'none';
             }
-            
-            map.fitBounds(routeLayer.getBounds(), {paddingBottomRight: [0, 200], paddingTopLeft: [200, 0]});
+
+            map.fitBounds(routeLayer.getBounds(), {
+                paddingBottomRight: [0, 200], paddingTopLeft: [200, 0]
+            });
+        } else {
+            document.getElementById('status-area').innerText = "ルートが見つかりませんでした。";
         }
-    } catch (error) {
+    } catch (err) {
         document.getElementById('status-area').innerText = "ルートの取得に失敗しました。";
+        console.error(err);
+    } finally {
+        setLoading(false);
     }
 }
 </script>
