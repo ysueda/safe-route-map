@@ -118,6 +118,9 @@
         <div id="rest-info">
             <span id="rest-text"></span>
         </div>
+        <div id="hazard-info" style="display:none; margin-top:6px; padding:5px 8px; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; font-size:12px; color:#856404;">
+            <span id="hazard-text">⚠️ 浸水危険区間を確認中…</span>
+        </div>
     </div>
 </div>
 
@@ -140,6 +143,7 @@
     <div class="legend-item"><div class="legend-dot" style="background:#2980b9;"></div>公衆トイレ</div>
     <div class="legend-item"><div class="legend-dot" style="background:red; opacity:0.6;"></div>危険エリア</div>
     <div class="legend-item"><div class="legend-dot" style="background:#8e44ad;"></div>手動ナビルート</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff4500; border:2px solid #cc0000;"></div>浸水危険区間</div>
 </div>
 
 <div id="bottom-panel">
@@ -454,12 +458,13 @@ const hazardLayer = L.layerGroup(
 
 // ── アプリ全体で使う「状態変数」 ──
 // let = あとで値が変わる変数。null = まだ何もない状態。
-let routeLayer      = null; // 現在表示中のルート（地図上の線）
-let userMarker      = null; // 現在地のマーカー（方向矢印）
-let highlightMarker = null; // 選ばれた休憩スポットを強調するマーカー
-let currentMode     = 'elderly'; // 現在のモード（'elderly'=高齢者モード, 'normal'=通常モード）
-let compassDeg      = 0;    // 現在の方位角（度）
-let watchId         = null; // geolocation.watchPosition の ID
+let routeLayer         = null; // 現在表示中のルート（地図上の線）
+let userMarker         = null; // 現在地のマーカー（方向矢印）
+let highlightMarker    = null; // 選ばれた休憩スポットを強調するマーカー
+let hazardSegmentLayer = null; // 浸水危険区間の赤いオーバーレイ
+let currentMode        = 'elderly'; // 現在のモード（'elderly'=高齢者モード, 'normal'=通常モード）
+let compassDeg         = 0;    // 現在の方位角（度）
+let watchId            = null; // geolocation.watchPosition の ID
 
 // ── 方向矢印アイコンを生成する関数 ──
 // deg: 北を0として時計回りの角度（度）
@@ -1164,6 +1169,136 @@ function useGPS() {
 map.on('click', e => calculateRoute(e.latlng.lat, e.latlng.lng));
 
 // ═══════════════════════════════════════════════════════
+// 【洪水浸水想定区域ポリゴン取得】
+//
+// 国土交通省が公開する洪水浸水想定区域データを
+// ArcGIS REST API（APIキー不要）で取得する。
+//
+// 豊島区付近の神田川・善福寺川などの浸水ポリゴンを
+// ルートのバウンディングボックスで絞り込んで取得する。
+//
+// 戻り値: GeoJSON Feature の配列（Polygon/MultiPolygon）
+//         通信失敗時は空配列を返す（ルート計算は続行）
+// ═══════════════════════════════════════════════════════
+async function fetchFloodPolygons(bounds) {
+    // bounds: Leaflet LatLngBounds オブジェクト
+    // ArcGIS REST API のエンベロープパラメータ（xmin,ymin,xmax,ymax）に変換
+    const xmin = bounds.getWest();
+    const ymin = bounds.getSouth();
+    const xmax = bounds.getEast();
+    const ymax = bounds.getNorth();
+
+    // 国交省洪水浸水想定区域 ArcGIS サービス（APIキー不要）
+    // L2想定最大規模（計画規模を超える最大の洪水）のレイヤー
+    const BASE = 'https://services.arcgis.com/sWN6tuO4aaMSCOhe/ArcGIS/rest/services/flood/FeatureServer/0/query';
+    const params = new URLSearchParams({
+        where:           '1=1',           // 全件（バウンディングボックスで絞る）
+        geometry:        `${xmin},${ymin},${xmax},${ymax}`,
+        geometryType:    'esriGeometryEnvelope',
+        spatialRel:      'esriSpatialRelIntersects',
+        inSR:            '4326',          // 入力座標系: WGS84
+        outSR:           '4326',          // 出力座標系: WGS84
+        outFields:       '*',
+        f:               'geojson',       // GeoJSON形式で返す
+        resultRecordCount: 200            // 最大200件
+    });
+
+    try {
+        const res = await fetch(`${BASE}?${params}`, {
+            signal: AbortSignal.timeout(8000) // 8秒タイムアウト
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        return json.features || [];
+    } catch (e) {
+        console.warn('洪水ポリゴン取得失敗（ルート計算は続行）:', e.message);
+        return []; // 失敗してもルート計算は止めない
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// 【危険セグメント可視化】
+//
+// ルートの各セグメント（2点間の線分）が洪水浸水想定区域と
+// 交差するかどうかを Turf.js で判定し、交差するセグメントを
+// 赤いポリラインで地図上に描画する。
+//
+// 引数:
+//   path         : ノードIDの配列（ダイクストラ法の出力）
+//   nodes        : Map<nodeId, {lat, lng}> OSMノード情報
+//   floodFeatures: GeoJSON Feature 配列（Polygon/MultiPolygon）
+//
+// 戻り値: 危険セグメント数（整数）
+// ═══════════════════════════════════════════════════════
+function highlightDangerousSegments(path, nodes, floodFeatures) {
+    // 前回の危険セグメントレイヤーがあれば削除
+    if (hazardSegmentLayer) {
+        map.removeLayer(hazardSegmentLayer);
+        hazardSegmentLayer = null;
+    }
+
+    if (floodFeatures.length === 0 || path.length < 2) return 0;
+
+    const dangerousLines = []; // 危険と判定されたセグメントの座標ペア
+    let dangerCount = 0;
+
+    // ルートの各セグメント（隣接する2ノード間）をチェック
+    for (let i = 0; i < path.length - 1; i++) {
+        const nA = nodes.get(path[i]);
+        const nB = nodes.get(path[i + 1]);
+        if (!nA || !nB) continue;
+
+        // Turf.js: このセグメントをLineStringとして定義
+        const segment = turf.lineString([
+            [nA.lng, nA.lat],
+            [nB.lng, nB.lat]
+        ]);
+
+        // このセグメントが浸水ポリゴンのいずれかと交差するか判定
+        let isDangerous = false;
+        for (const feature of floodFeatures) {
+            try {
+                // turf.booleanIntersects: 2つのジオメトリが交差するか判定
+                // （点・線・面すべてに対応する汎用交差判定）
+                if (turf.booleanIntersects(segment, feature)) {
+                    isDangerous = true;
+                    break; // 1つでも交差したら次のセグメントへ
+                }
+            } catch (e) {
+                // 無効なジオメトリは無視して続行
+            }
+        }
+
+        if (isDangerous) {
+            // 危険セグメントの座標を収集（Leaflet は [lat, lng] の順）
+            dangerousLines.push([
+                [nA.lat, nA.lng],
+                [nB.lat, nB.lng]
+            ]);
+            dangerCount++;
+        }
+    }
+
+    // 危険セグメントがあれば地図に赤いポリラインを追加
+    if (dangerousLines.length > 0) {
+        hazardSegmentLayer = L.layerGroup(
+            dangerousLines.map(coords =>
+                L.polyline(coords, {
+                    color:     '#ff4500',  // 赤橙色（通常ルートと区別）
+                    weight:    10,         // ルート線より少し太め
+                    opacity:   0.85,
+                    lineCap:   'round',
+                    lineJoin:  'round',
+                    dashArray: '12, 6'    // 点線で「警告」感を演出
+                })
+            )
+        ).addTo(map);
+    }
+
+    return dangerCount;
+}
+
+// ═══════════════════════════════════════════════════════
 // 【メインルート計算】
 //
 // このアプリの「心臓部」となる関数。
@@ -1191,6 +1326,10 @@ async function calculateRoute(userLat, userLng) {
     const _perfStart = performance.now(); // ⏱ 計測開始
     document.getElementById('perf-badge').style.display = 'none'; // 前回の表示を隠す
     setLoading(true, '道路データを取得中…'); // ローディング画面を表示
+
+    // 前回の危険セグメントオーバーレイをリセット
+    if (hazardSegmentLayer) { map.removeLayer(hazardSegmentLayer); hazardSegmentLayer = null; }
+    document.getElementById('hazard-info').style.display = 'none';
 
     // 現在地マーカーを更新（watchPosition で既に表示中なら位置だけ更新）
     if (!userMarker) {
@@ -1312,6 +1451,44 @@ async function calculateRoute(userLat, userLng) {
                     : currentMode === 'elderly'   ? '#e74c3c'
                     : '#3498db';
         drawRoute(finalPath, nodes, color);
+
+        // ── Step7.5: 浸水危険区間を検出して可視化 ──
+        // ルートのバウンディングボックスを取得して、その範囲内の洪水ポリゴンを取得
+        // 非同期で実行（UIブロックしないよう後続処理と並行して始める）
+        document.getElementById('hazard-info').style.display = 'block';
+        document.getElementById('hazard-text').textContent   = '🌊 浸水想定区域を確認中…';
+
+        // ルートの地理的範囲を取得（Leaflet routeLayer から取得）
+        const routeBounds = routeLayer.getBounds();
+
+        // 洪水ポリゴンを取得して危険セグメントを強調表示
+        // await を使わず then() で後続処理を妨げない（ルート描画は既に完了）
+        fetchFloodPolygons(routeBounds).then(floodFeatures => {
+            const dangerCount = highlightDangerousSegments(finalPath, nodes, floodFeatures);
+            const hazardEl    = document.getElementById('hazard-info');
+            const hazardText  = document.getElementById('hazard-text');
+
+            if (floodFeatures.length === 0) {
+                // データ取得失敗またはAPIエラー
+                hazardEl.style.background = '#e8f4f8';
+                hazardEl.style.borderColor = '#5bc0de';
+                hazardEl.style.color = '#31708f';
+                hazardText.textContent = '🌊 浸水データを取得できませんでした（オフライン等）';
+            } else if (dangerCount === 0) {
+                // 危険区間なし → 青系で安全を表示
+                hazardEl.style.background = '#d4edda';
+                hazardEl.style.borderColor = '#28a745';
+                hazardEl.style.color = '#155724';
+                hazardText.textContent = '✅ このルートに浸水危険区間はありません';
+            } else {
+                // 危険区間あり → 警告色で件数を表示
+                hazardEl.style.background = '#f8d7da';
+                hazardEl.style.borderColor = '#dc3545';
+                hazardEl.style.color = '#721c24';
+                hazardText.textContent =
+                    `⚠️ このルートは浸水危険区間を ${dangerCount} 箇所通過します（点線で表示）`;
+            }
+        });
 
         // ── Step8: UIを更新 ──
         // 歩行速度（m/秒）: 高齢者/via-rest=0.5m/s, 通常=1.2m/s（国土交通省バリアフリー基準）
