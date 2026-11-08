@@ -123,8 +123,17 @@
 
 <div id="perf-badge">⏱ <span id="perf-time">-</span></div>
 
+<div id="compass-btn-wrap" style="position:absolute;bottom:300px;right:10px;z-index:1000;">
+    <button id="compass-btn" onclick="requestCompassPermission()"
+        style="background:rgba(255,255,255,0.95);border:2px solid #1565C0;border-radius:8px;
+               padding:7px 11px;font-size:13px;color:#1565C0;font-weight:bold;cursor:pointer;
+               box-shadow:0 2px 6px rgba(0,0,0,0.2);">
+        🧭 コンパス許可
+    </button>
+</div>
+
 <div id="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#e74c3c;"></div>現在地</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1565C0;"></div>現在地</div>
     <div class="legend-item"><div class="legend-dot" style="background:#2c3e50; border-radius:2px;"></div>避難所</div>
     <div class="legend-item"><span style="font-size:13px;">🌳</span> 公園</div>
     <div class="legend-item"><span style="font-size:13px;">🪑</span> ベンチ設置場所</div>
@@ -484,32 +493,43 @@ function startLocationWatch() {
     }, null, { enableHighAccuracy: true, maximumAge: 3000 });
 }
 
-// ── コンパス（方位センサー）を起動 ──
-function startCompass() {
-    if (typeof DeviceOrientationEvent === 'undefined') return;
+// ── コンパス（方位センサー）のリスナー登録 ──
+function listenCompass() {
+    window.addEventListener('deviceorientation', e => {
+        if (e.alpha === null) return;
+        compassDeg = (360 - e.alpha) % 360;
+        if (userMarker) userMarker.setIcon(makeArrowIcon(compassDeg));
+    }, true);
+    // ボタンを非表示にする
+    const btn = document.getElementById('compass-btn-wrap');
+    if (btn) btn.style.display = 'none';
+}
 
-    const listen = () => {
-        window.addEventListener('deviceorientation', e => {
-            // alpha = 北からの角度（反時計回り） → 時計回りに変換
-            if (e.alpha === null) return;
-            compassDeg = (360 - e.alpha) % 360;
-            if (userMarker) userMarker.setIcon(makeArrowIcon(compassDeg));
-        }, true);
-    };
-
-    // iOSは許可が必要
+// ── 🧭 コンパス許可ボタンが押されたとき ──
+function requestCompassPermission() {
+    if (typeof DeviceOrientationEvent === 'undefined') {
+        alert('このデバイスはコンパスに対応していません');
+        return;
+    }
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // iOS: ユーザー操作起点で許可を求める
         DeviceOrientationEvent.requestPermission()
-            .then(state => { if (state === 'granted') listen(); })
-            .catch(() => {});
+            .then(state => {
+                if (state === 'granted') {
+                    listenCompass();
+                } else {
+                    alert('コンパスの許可が拒否されました。設定アプリ→Safari→モーションと方向から許可してください。');
+                }
+            })
+            .catch(err => alert('エラー: ' + err));
     } else {
-        listen();
+        // Android・PCはそのまま
+        listenCompass();
     }
 }
 
-// ページ読み込み時にすぐ追跡&コンパス開始
+// ページ読み込み時は現在地追跡だけ開始（コンパスはボタンから）
 startLocationWatch();
-startCompass();
 
 // ── OSM道路グラフのキャッシュ ──
 // 道路データは重いので初回だけ取得してここに保存しておく
