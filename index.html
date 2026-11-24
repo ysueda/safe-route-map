@@ -552,11 +552,82 @@ function requestCompassPermission() {
 // ページ読み込み時は現在地追跡だけ開始（コンパスはボタンから）
 startLocationWatch();
 
+// ── バックグラウンドで道路データを事前読み込み ──
+// ユーザーがボタンを押すより前に Overpass API 通信を開始しておく。
+// localStorageキャッシュがあれば即座に完了し、なければ裏で取得を進める。
+// ローディング画面は出さず、エラーも無視する（ボタン押下時に再試行される）。
+(async () => {
+    try {
+        // loading-msg を書き換えないよう、事前取得中は表示を変えない
+        // fetchOSMGraph 内で loading-msg を更新するが、オーバーレイは非表示なので問題なし
+        await fetchOSMGraph();
+        console.log('道路データの事前読み込み完了');
+    } catch (e) {
+        // エラーは無視（ボタン押下時に再試行）
+        console.warn('事前読み込み失敗（ボタン押下時に再試行）:', e);
+    }
+})();
+
 // ── OSM道路グラフのキャッシュ ──
 // 道路データは重いので初回だけ取得してここに保存しておく
 // 2回目以降はこのキャッシュを使うため高速化できる
 // null = まだ取得していない状態
-let osmGraph = null; // { nodes: Map<id, {lat,lng}>, adj: Map<id, [{to, dist}]> }
+let osmGraph = null; // { nodes: Map<id, {lat,lng}>, adj: Map<id, [{to, dist}]>, grid: {...} }
+
+// ── 格子インデックス（findNearestNode高速化用）──
+// 豊島区を0.001度（約80m）の格子に分割し、各セルにノードIDを格納する
+// これにより近傍探索がO(N) → O(1)相当に高速化される
+const GRID_STEP = 0.001; // 格子の1辺の大きさ（度）
+function buildGridIndex(nodes) {
+    const grid = new Map();
+    nodes.forEach((node, id) => {
+        const gx = Math.floor(node.lat / GRID_STEP);
+        const gy = Math.floor(node.lng / GRID_STEP);
+        const key = gx + ',' + gy;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(id);
+    });
+    return grid;
+}
+
+// 格子インデックスを使った高速最近傍検索
+// 探索半径を1セルずつ広げ、候補が見つかり次第返す
+function findNearestNodeFast(lat, lng, nodes, grid) {
+    const gx0 = Math.floor(lat / GRID_STEP);
+    const gy0 = Math.floor(lng / GRID_STEP);
+
+    let bestId = null;
+    let bestDist = Infinity;
+
+    // 半径0から始め、候補が見つかったら1段広げて打ち切る
+    for (let r = 0; r <= 3; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                // 外周セルのみ調べる（内側は既に調べ済み）
+                if (r > 0 && Math.abs(dx) < r && Math.abs(dy) < r) continue;
+                const key = (gx0 + dx) + ',' + (gy0 + dy);
+                const ids = grid.get(key);
+                if (!ids) continue;
+                for (const id of ids) {
+                    const node = nodes.get(id);
+                    const d = haversine(lat, lng, node.lat, node.lng);
+                    if (d < bestDist) { bestDist = d; bestId = id; }
+                }
+            }
+        }
+        // r=0で候補が見つかれば、r=1（隣接セル）まで確認して打ち切り
+        if (r >= 1 && bestId !== null) break;
+    }
+
+    // フォールバック: 格子で見つからない場合は線形探索
+    if (bestId === null) {
+        nodes.forEach((node, id) => {
+            const d = haversine(lat, lng, node.lat, node.lng);
+            if (d < bestDist) { bestDist = d; bestId = id; }
+        });
+    }
+    return bestId;
+}
 
 // ═══════════════════════════════════════════════════════
 // 【ハversine距離計算】
@@ -641,7 +712,8 @@ async function fetchOSMGraph() {
                 document.getElementById('loading-msg').textContent = 'キャッシュから道路データを読み込み中…';
                 const nodes = new Map(nodesArr);
                 const adj   = new Map(adjArr.map(([k, v]) => [k, v]));
-                osmGraph = { nodes, adj };
+                const grid  = buildGridIndex(nodes); // 格子インデックスを再構築
+                osmGraph = { nodes, adj, grid };
                 return osmGraph;
             }
         }
@@ -768,8 +840,9 @@ out skel qt;
         }
     });
 
-    // ── グラフをメモリにキャッシュ ──
-    osmGraph = { nodes, adj };
+    // ── グラフをメモリにキャッシュ（格子インデックスも構築）──
+    const grid = buildGridIndex(nodes);
+    osmGraph = { nodes, adj, grid };
 
     // ── localStorageにも保存（次回起動時に使い回す）──
     try {
@@ -861,6 +934,43 @@ function findNearestNode(lat, lng, nodes) {
 //   [{ shelter, path, distM, distCost }, ...]
 //   道路距離が近い順（全避難所分）
 // ═══════════════════════════════════════════════════════
+// ── MinHeap（二分ヒープ）実装 ──
+// queue.sort() の代わりに使う優先度付きキュー
+// push/pop が O(log N) で動作し、毎ループのソート O(N log N) を排除できる
+class MinHeap {
+    constructor() { this.h = []; }
+    push(cost, id) {
+        this.h.push([cost, id]);
+        this._up(this.h.length - 1);
+    }
+    pop() {
+        const top = this.h[0];
+        const last = this.h.pop();
+        if (this.h.length > 0) { this.h[0] = last; this._down(0); }
+        return top;
+    }
+    get size() { return this.h.length; }
+    _up(i) {
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (this.h[p][0] <= this.h[i][0]) break;
+            [this.h[p], this.h[i]] = [this.h[i], this.h[p]];
+            i = p;
+        }
+    }
+    _down(i) {
+        const n = this.h.length;
+        while (true) {
+            let m = i, l = 2*i+1, r = 2*i+2;
+            if (l < n && this.h[l][0] < this.h[m][0]) m = l;
+            if (r < n && this.h[r][0] < this.h[m][0]) m = r;
+            if (m === i) break;
+            [this.h[m], this.h[i]] = [this.h[i], this.h[m]];
+            i = m;
+        }
+    }
+}
+
 function dijkstra(startNodeId, goalSet, graph) {
     // graph から nodes（ノード座標）と adj（隣接リスト）を取り出す
     const { nodes, adj } = graph;
@@ -872,61 +982,52 @@ function dijkstra(startNodeId, goalSet, graph) {
     const gCost = new Map();
 
     // prev: 経路復元のための「直前のノード」を記録するMap
-    // 最終的に避難所から逆向きにたどることで、スタートまでの経路がわかる
     const prev  = new Map();
 
-    // スタートノードのコストは 0（自分自身まで 0m）
+    // スタートノードのコストは 0
     gCost.set(startNodeId, 0);
 
-    // 優先度付きキュー: [コスト, ノードID] のペアを入れる配列
-    // コストが小さい順に処理するため、取り出す前にソートする
-    const queue = [[0, startNodeId]];
+    // 優先度付きキュー（二分ヒープ）: queue.sort() より大幅に高速
+    const heap = new MinHeap();
+    heap.push(0, startNodeId);
 
     // 見つかった避難所を格納するリスト
     const found = [];
+    let remainingGoals = goalSet.size; // 未発見の避難所数
 
     // ── メインループ ──
-    // キューが空になるまで繰り返す（全避難所への最短距離を確定する）
-    while (queue.length > 0) {
+    // 全避難所を発見するかキューが空になるまで繰り返す
+    while (heap.size > 0) {
 
-        // Step1: キューをコスト順（小さい順）に並べ替えて先頭を取り出す
-        // sort の比較関数: a[0] - b[0] = コスト（1番目の要素）で昇順ソート
-        queue.sort((a, b) => a[0] - b[0]);
-        const [cost, u] = queue.shift(); // コスト最小のノードを取り出す
+        // Step1: コスト最小のノードをヒープから取り出す（O(log N)）
+        const [cost, u] = heap.pop();
 
-        // Step2: 古い（無効な）エントリをスキップする
-        // ダイクストラ法は同じノードをキューに複数回追加することがある。
-        // より短い経路が見つかって更新済みの場合、古いエントリはスキップする。
-        // ?? Infinity : gCost.get(u) が undefined（未登録）ならInfinityとして扱う
+        // Step2: 古い（無効な）エントリをスキップ
         if (cost > (gCost.get(u) ?? Infinity)) continue;
 
         // Step3: このノードが避難所かどうか確認
         if (goalSet.has(u)) {
-            // 避難所ノードに到達！記録する
             found.push({
-                shelter:  goalSet.get(u), // 避難所の情報（名前・座標）
-                distCost: cost,           // スタートからのコスト（道路距離）
-                nodeId:   u               // ノードID
+                shelter:  goalSet.get(u),
+                distCost: cost,
+                nodeId:   u
             });
-            // 全避難所を探索するため早期終了しない（キューが空になるまで続ける）
+            remainingGoals--;
+            // 全避難所を発見したら早期終了（不要な探索を省く）
+            if (remainingGoals === 0) break;
         }
 
-        // Step4: 隣接ノードのコストを更新する（緩和操作 = Relaxation）
-        // adj.get(u) = ノードuから直接つながっているノードのリスト
-        const neighbors = adj.get(u) || []; // 隣接なしの場合は空配列
+        // Step4: 隣接ノードのコストを更新（緩和操作）
+        const neighbors = adj.get(u) || [];
         for (const edge of neighbors) {
-            const v = edge.to; // 隣接ノードのID
-
-            // 新しいコスト = 現在ノードのコスト + このエッジのコスト
-            // （階段なら5倍のコストが設定済み）
+            const v = edge.to;
             const newCost = cost + edge.dist;
-            const oldCost = gCost.get(v) ?? Infinity; // 現在記録されている最短コスト
+            const oldCost = gCost.get(v) ?? Infinity;
 
-            // より短いコストで到達できるなら更新する
             if (newCost < oldCost) {
-                gCost.set(v, newCost);  // 最短コストを更新
-                prev.set(v, u);         // 経路復元用に直前ノードを記録
-                queue.push([newCost, v]); // キューに追加（次のループで処理）
+                gCost.set(v, newCost);
+                prev.set(v, u);
+                heap.push(newCost, v); // ヒープに追加（O(log N)）
             }
         }
     }
@@ -1261,20 +1362,18 @@ async function calculateRoute(userLat, userLng) {
         // 初回は Overpass API に通信してグラフを構築する（数秒かかる）
         // 2回目以降は osmGraph キャッシュから即座に返ってくる
         const graph = await fetchOSMGraph();
-        const { nodes, adj } = graph;
+        const { nodes, adj, grid } = graph;
 
         setLoading(true, 'ダイクストラ法で経路計算中…'); // メッセージ更新
 
         // ── Step2: 現在地 → グラフノード に変換 ──
-        // ユーザーの座標（GPS等で取得）に最も近い道路ノードを見つける
-        const startNodeId = findNearestNode(userLat, userLng, nodes);
+        // 格子インデックスを使って高速に最近傍ノードを探索
+        const startNodeId = findNearestNodeFast(userLat, userLng, nodes, grid);
 
         // ── Step3: 避難所 → goalSet（目標ノードのMap）に変換 ──
-        // goalSet = Map<ノードID, 避難所オブジェクト>
-        // ダイクストラ法はこの goalSet に含まれるノードに到達したら記録する
         const goalSet = new Map();
         shelters.forEach(s => {
-            const nodeId = findNearestNode(s.lat, s.lng, nodes);
+            const nodeId = findNearestNodeFast(s.lat, s.lng, nodes, grid);
             // 複数の避難所が同じノードに対応する場合は最初の1件のみ登録
             // （重複登録するとダイクストラが同一ノードで複数カウントしてしまうため）
             if (!goalSet.has(nodeId)) {
@@ -1320,11 +1419,11 @@ async function calculateRoute(userLat, userLng) {
                 setLoading(true, '休憩所を通るルートを計算中…');
 
                 // 経由地リスト: [現在地ノード, 休憩所ノード1, 休憩所ノード2..., 避難所ノード]
-                const waypointNodeIds = selectedRests.map(s => findNearestNode(s.lat, s.lng, nodes));
+                const waypointNodeIds = selectedRests.map(s => findNearestNodeFast(s.lat, s.lng, nodes, grid));
                 const segments = [startNodeId, ...waypointNodeIds];
 
                 // 最後のセグメントは避難所（最短ルートで求めた避難所ノードを再利用）
-                const shelterNodeId = findNearestNode(nearestShelter.lat, nearestShelter.lng, nodes);
+                const shelterNodeId = findNearestNodeFast(nearestShelter.lat, nearestShelter.lng, nodes, grid);
 
                 // 各セグメント（区間）ごとにダイクストラを実行して経路を連結する
                 let combinedPath = [];
@@ -1506,11 +1605,11 @@ async function directRoute(userLat, userLng, destLat, destLng, destName) {
     try {
         // OSM道路グラフを取得（キャッシュ済みであれば即座に返る）
         const graph = await fetchOSMGraph();
-        const { nodes } = graph;
+        const { nodes, grid } = graph;
 
-        // 現在地と目的地をそれぞれ最近傍ノードに変換
-        const startNodeId = findNearestNode(userLat, userLng, nodes); // 現在地ノード
-        const goalNodeId  = findNearestNode(destLat, destLng, nodes); // 目的地ノード
+        // 現在地と目的地をそれぞれ最近傍ノードに変換（格子インデックスで高速化）
+        const startNodeId = findNearestNodeFast(userLat, userLng, nodes, grid);
+        const goalNodeId  = findNearestNodeFast(destLat, destLng, nodes, grid);
 
         // goalSet = 目的地ノード1件だけのMap
         // new Map([[key, value]]) = 初期要素1件でMapを作成するJavaScriptの書き方
