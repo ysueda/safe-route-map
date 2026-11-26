@@ -1361,7 +1361,7 @@ map.on('click', e => calculateRoute(e.latlng.lat, e.latlng.lng));
 async function calculateRoute(userLat, userLng) {
     const _perfStart = performance.now(); // ⏱ 計測開始
     document.getElementById('perf-badge').style.display = 'none'; // 前回の表示を隠す
-    setLoading(true, '道路データを取得中…'); // ローディング画面を表示
+    setLoading(true, ''); // ローディング画面を表示
 
     // 現在地マーカーを更新（watchPosition で既に表示中なら位置だけ更新）
     if (!userMarker) {
