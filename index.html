@@ -1724,6 +1724,10 @@ async function fetchWeatherWarning() {
 // 起動時と5分ごとに更新
 fetchWeatherWarning();
 setInterval(fetchWeatherWarning, 5 * 60 * 1000);
+// テスト用（確認したら消す）
+document.getElementById('weather-banner').style.display = 'block';
+document.getElementById('weather-banner').className = 'warning';
+document.getElementById('weather-banner').textContent = '⚠️ 豊島区に大雨警報が発令されています';
 </script>
 </body>
 </html>
