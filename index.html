@@ -735,7 +735,7 @@ async function fetchOSMGraph() {
         console.warn('localStorageキャッシュ読み込み失敗:', e);
     }
 
-    document.getElementById('loading-msg').textContent = '道路データを取得中…（初回のみ）';
+    document.getElementById('loading-msg').textContent = '道路データを取得中… 0%（初回のみ）';
 
     // ── Overpass APIへのクエリ（質問文）を作成 ──
     // 豊島区（緯度35.710〜35.755、経度139.670〜139.760）内で
@@ -795,7 +795,7 @@ out skel qt;
     // ── 受け取ったJSONデータを解析 ──
     // res.json() = サーバーから届いたJSONテキストをJavaScriptオブジェクトに変換
     const data = await res.json();
-
+    document.getElementById('loading-msg').textContent = 'データを解析中… 30%';
     // ── グラフのデータ構造を初期化 ──
     // nodes = Map（辞書型）: ノードID → { lat（緯度）, lng（経度）}
     // adj   = Map（辞書型）: ノードID → [隣接するノードのリスト]
@@ -816,7 +816,7 @@ out skel qt;
             adj.set(el.id, []);
         }
     });
-
+    document.getElementById('loading-msg').textContent = 'ノードを登録中… 60%';
     // ── Step2: ウェイ（道路）からエッジ（辺）を生成 ──
     // ウェイは「ノードIDの配列」として記録されている
     // 例: ウェイ = [A, B, C, D] → エッジは A-B, B-C, C-D の3本
@@ -853,9 +853,10 @@ out skel qt;
             adj.get(b).push({ to: a, dist: cost, realDist: d });
         }
     });
-
+    document.getElementById('loading-msg').textContent = 'ルートを構築中… 85%';
     // ── グラフをメモリにキャッシュ（格子インデックスも構築）──
     const grid = buildGridIndex(nodes);
+    document.getElementById('loading-msg').textContent = '完了！ 100%';
     osmGraph = { nodes, adj, grid };
 
     // ── localStorageにも保存（次回起動時に使い回す）──
