@@ -95,10 +95,24 @@
 
         /* 現在地方向矢印マーカー */
         .arrow-marker { pointer-events: none; }
+        /* 気象警報バナー */
+#weather-banner {
+    display: none;
+    position: absolute; top: 0; left: 0; width: 100%;
+    z-index: 1500; box-sizing: border-box;
+    padding: 10px 15px;
+    background: #e74c3c; color: white;
+    font-size: 13px; font-weight: bold;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#weather-banner.warning { background: #e67e22; }
+#weather-banner.advisory { background: #f39c12; }
     </style>
 </head>
 <body>
 
+<div id="weather-banner"></div>
 <div id="map"></div>
 
 <div id="loading-overlay">
@@ -1659,7 +1673,57 @@ async function directRoute(userLat, userLng, destLat, destLng, destName) {
         setLoading(false); // 成功・失敗どちらでもローディングを非表示にする
     }
 }
+// ── 気象庁API 警報バナー ──
+const TOSHIMA_CODE = '1313100'; // 豊島区のエリアコード
 
+const WARNING_LABELS = {
+    '大雨警報': '大雨警報',
+    '洪水警報': '洪水警報',
+    '暴風警報': '暴風警報',
+    '大雪警報': '大雪警報',
+    '大雨注意報': '大雨注意報',
+    '洪水注意報': '洪水注意報',
+};
+
+async function fetchWeatherWarning() {
+    try {
+        const res = await fetch('https://www.jma.go.jp/bosai/warning/data/warning/130000.json');
+        const data = await res.json();
+        
+        const banner = document.getElementById('weather-banner');
+        const areaWarnings = [];
+
+        // 豊島区のデータを探す
+        if (data.areaTypes) {
+            for (const areaType of data.areaTypes) {
+                for (const area of areaType.areas) {
+                    if (area.code === TOSHIMA_CODE) {
+                        for (const item of area.warnings) {
+                            if (item.status === '発表' || item.status === '継続') {
+                                areaWarnings.push(item.text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (areaWarnings.length > 0) {
+            const hasWarning = areaWarnings.some(w => w.includes('警報'));
+            banner.className = hasWarning ? 'warning' : 'advisory';
+            banner.textContent = '⚠️ 豊島区に' + areaWarnings.join('・') + 'が発令されています';
+            banner.style.display = 'block';
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) {
+        console.warn('気象情報の取得に失敗:', e);
+    }
+}
+
+// 起動時と5分ごとに更新
+fetchWeatherWarning();
+setInterval(fetchWeatherWarning, 5 * 60 * 1000);
 </script>
 </body>
 </html>
